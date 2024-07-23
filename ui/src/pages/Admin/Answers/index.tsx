@@ -1,6 +1,25 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 import { FC } from 'react';
-import { Button, Form, Table, Stack } from 'react-bootstrap';
-import { useSearchParams } from 'react-router-dom';
+import { Form, Table, Stack } from 'react-bootstrap';
+import { useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
 import classNames from 'classnames';
@@ -9,19 +28,23 @@ import {
   FormatTime,
   Icon,
   Pagination,
-  Modal,
   BaseUserCard,
   Empty,
   QueryGroup,
 } from '@/components';
 import { ADMIN_LIST_STATUS } from '@/common/constants';
-import { useEditStatusModal } from '@/hooks';
 import * as Type from '@/common/interface';
-import { useAnswerSearch, changeAnswerStatus } from '@/services';
+import { useAnswerSearch } from '@/services';
 import { escapeRemove } from '@/utils';
 import { pathFactory } from '@/router/pathFactory';
 
-const answerFilterItems: Type.AdminContentsFilterBy[] = ['normal', 'deleted'];
+import AnswerAction from './components/Action';
+
+const answerFilterItems: Type.AdminContentsFilterBy[] = [
+  'normal',
+  'pending',
+  'deleted',
+];
 
 const Answers: FC = () => {
   const [urlSearchParams, setUrlSearchParams] = useSearchParams();
@@ -45,44 +68,6 @@ const Answers: FC = () => {
   });
   const count = listData?.count || 0;
 
-  const handleCallback = (id, type) => {
-    if (type === 'normal') {
-      changeAnswerStatus(id, 'available').then(() => {
-        refreshList();
-      });
-    }
-    if (type === 'deleted') {
-      const item = listData?.list?.filter((v) => v.id === id)?.[0];
-      Modal.confirm({
-        title: t('title', { keyPrefix: 'delete' }),
-        content:
-          item.accepted === 2
-            ? t('answer_accepted', { keyPrefix: 'delete' })
-            : `<p>${t('other', { keyPrefix: 'delete' })}</p>`,
-        cancelBtnVariant: 'link',
-        confirmBtnVariant: 'danger',
-        confirmText: t('delete', { keyPrefix: 'btns' }),
-        onConfirm: () => {
-          changeAnswerStatus(id, 'deleted').then(() => {
-            refreshList();
-          });
-        },
-      });
-    }
-  };
-
-  const changeModal = useEditStatusModal({
-    editType: 'answer',
-    callback: handleCallback,
-  });
-
-  const handleChange = (itemId) => {
-    changeModal.onShow({
-      id: itemId,
-      type: curFilter,
-    });
-  };
-
   const handleFilter = (e) => {
     urlSearchParams.set('query', e.target.value);
     urlSearchParams.delete('page');
@@ -91,33 +76,34 @@ const Answers: FC = () => {
   return (
     <>
       <h3 className="mb-4">{t('page_title')}</h3>
-      <div className="d-flex justify-content-between align-items-center mb-3">
+      <div className="d-flex flex-wrap justify-content-between align-items-center mb-3">
         <QueryGroup
           data={answerFilterItems}
           currentSort={curFilter}
           sortKey="status"
-          i18nKeyPrefix="admin.answers"
+          i18nKeyPrefix="btns"
         />
 
         <Form.Control
           value={curQuery}
           onChange={handleFilter}
           size="sm"
-          type="input"
+          type="search"
           placeholder={t('filter.placeholder')}
           style={{ width: '12.25rem' }}
+          className="mt-3 mt-sm-0"
         />
       </div>
-      <Table responsive>
+      <Table responsive="md">
         <thead>
           <tr>
-            <th>{t('post')}</th>
+            <th className="min-w-15">{t('post')}</th>
             <th style={{ width: '11%' }}>{t('votes')}</th>
             <th style={{ width: '14%' }}>{t('created')}</th>
             <th style={{ width: '11%' }}>{t('status')}</th>
-            {curFilter !== 'deleted' && (
-              <th style={{ width: '11%' }}>{t('action')}</th>
-            )}
+            <th style={{ width: '11%' }} className="text-end">
+              {t('action')}
+            </th>
           </tr>
         </thead>
         <tbody className="align-middle">
@@ -125,40 +111,34 @@ const Answers: FC = () => {
             return (
               <tr key={li.id}>
                 <td>
-                  <Stack>
-                    <Stack direction="horizontal" gap={2}>
-                      <a
-                        href={pathFactory.answerLanding({
-                          questionId: li.question_id,
-                          slugTitle: li.question_info.url_title,
-                          answerId: li.id,
-                        })}
-                        target="_blank"
-                        className="text-break text-wrap"
-                        rel="noreferrer">
-                        {li.question_info.title}
-                      </a>
-                      {li.accepted === 2 && (
-                        <Icon
-                          name="check-circle-fill"
-                          className="ms-2 text-success"
-                        />
-                      )}
-                    </Stack>
-                    <div
-                      className="text-truncate-2 fs-14"
-                      style={{ maxWidth: '30rem' }}>
-                      {escapeRemove(li.description)}
-                    </div>
-                  </Stack>
+                  <Link
+                    to={pathFactory.answerLanding({
+                      questionId: li.question_id,
+                      slugTitle: li.question_info.url_title,
+                      answerId: li.id,
+                    })}
+                    target="_blank"
+                    className="text-break text-wrap"
+                    rel="noreferrer">
+                    {li.question_info.title}
+                  </Link>
+                  {li.accepted === 2 && (
+                    <Icon
+                      name="check-circle-fill"
+                      className="ms-2 text-success"
+                    />
+                  )}
+                  <div className="text-truncate-2 small max-w-30">
+                    {escapeRemove(li.description)}
+                  </div>
                 </td>
                 <td>{li.vote_count}</td>
                 <td>
                   <Stack>
-                    <BaseUserCard data={li.user_info} />
+                    <BaseUserCard data={li.user_info} nameMaxWidth="200px" />
 
                     <FormatTime
-                      className="fs-14 text-secondary"
+                      className="small text-secondary"
                       time={li.create_time}
                     />
                   </Stack>
@@ -169,19 +149,18 @@ const Answers: FC = () => {
                       'badge',
                       ADMIN_LIST_STATUS[curFilter]?.variant,
                     )}>
-                    {t(ADMIN_LIST_STATUS[curFilter]?.name)}
+                    {t(ADMIN_LIST_STATUS[curFilter]?.name, {
+                      keyPrefix: 'btns',
+                    })}
                   </span>
                 </td>
-                {curFilter !== 'deleted' && (
-                  <td>
-                    <Button
-                      variant="link"
-                      className="p-0 btn-no-border"
-                      onClick={() => handleChange(li.id)}>
-                      {t('change')}
-                    </Button>
-                  </td>
-                )}
+                <td className="text-end">
+                  <AnswerAction
+                    itemData={{ id: li.id, accepted: li.accepted }}
+                    curFilter={curFilter}
+                    refreshList={refreshList}
+                  />
+                </td>
               </tr>
             );
           })}

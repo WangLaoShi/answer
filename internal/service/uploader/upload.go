@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package uploader
 
 import (
@@ -11,15 +30,18 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/answerdev/answer/internal/base/reason"
-	"github.com/answerdev/answer/internal/service/service_config"
-	"github.com/answerdev/answer/internal/service/siteinfo_common"
-	"github.com/answerdev/answer/pkg/checker"
-	"github.com/answerdev/answer/pkg/dir"
-	"github.com/answerdev/answer/pkg/uid"
+	"github.com/apache/incubator-answer/internal/base/reason"
+	"github.com/apache/incubator-answer/internal/service/service_config"
+	"github.com/apache/incubator-answer/internal/service/siteinfo_common"
+	"github.com/apache/incubator-answer/pkg/checker"
+	"github.com/apache/incubator-answer/pkg/dir"
+	"github.com/apache/incubator-answer/pkg/uid"
+	"github.com/apache/incubator-answer/plugin"
 	"github.com/disintegration/imaging"
 	"github.com/gin-gonic/gin"
+	exifremove "github.com/scottleedavis/go-exif-remove"
 	"github.com/segmentfault/pacman/errors"
+	"github.com/segmentfault/pacman/log"
 )
 
 const (
@@ -36,147 +58,176 @@ var (
 		postSubPath,
 		brandingSubPath,
 	}
-	FormatExts = map[string]imaging.Format{
+	supportedThumbFileExtMapping = map[string]imaging.Format{
 		".jpg":  imaging.JPEG,
 		".jpeg": imaging.JPEG,
 		".png":  imaging.PNG,
-		//".gif":  imaging.GIF,
-		//".tif":  imaging.TIFF,
-		//".tiff": imaging.TIFF,
-		//".bmp":  imaging.BMP,
+		".gif":  imaging.GIF,
 	}
 )
 
-// UploaderService user service
-type UploaderService struct {
+type UploaderService interface {
+	UploadAvatarFile(ctx *gin.Context) (url string, err error)
+	UploadPostFile(ctx *gin.Context) (url string, err error)
+	UploadBrandingFile(ctx *gin.Context) (url string, err error)
+	AvatarThumbFile(ctx *gin.Context, fileName string, size int) (url string, err error)
+}
+
+// uploaderService uploader service
+type uploaderService struct {
 	serviceConfig   *service_config.ServiceConfig
-	siteInfoService *siteinfo_common.SiteInfoCommonService
+	siteInfoService siteinfo_common.SiteInfoCommonService
 }
 
 // NewUploaderService new upload service
 func NewUploaderService(serviceConfig *service_config.ServiceConfig,
-	siteInfoService *siteinfo_common.SiteInfoCommonService) *UploaderService {
+	siteInfoService siteinfo_common.SiteInfoCommonService) UploaderService {
 	for _, subPath := range subPathList {
 		err := dir.CreateDirIfNotExist(filepath.Join(serviceConfig.UploadPath, subPath))
 		if err != nil {
 			panic(err)
 		}
 	}
-	return &UploaderService{
+	return &uploaderService{
 		serviceConfig:   serviceConfig,
 		siteInfoService: siteInfoService,
 	}
 }
 
 // UploadAvatarFile upload avatar file
-func (us *UploaderService) UploadAvatarFile(ctx *gin.Context) (url string, err error) {
+func (us *uploaderService) UploadAvatarFile(ctx *gin.Context) (url string, err error) {
+	url, err = us.tryToUploadByPlugin(ctx, plugin.UserAvatar)
+	if err != nil {
+		return "", err
+	}
+	if len(url) > 0 {
+		return url, nil
+	}
+
 	// max size
 	ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, 5*1024*1024)
-	_, file, err := ctx.Request.FormFile("file")
+	file, fileHeader, err := ctx.Request.FormFile("file")
 	if err != nil {
 		return "", errors.BadRequest(reason.RequestFormatError).WithError(err)
 	}
-	fileExt := strings.ToLower(path.Ext(file.Filename))
-	if _, ok := FormatExts[fileExt]; !ok {
+	file.Close()
+	fileExt := strings.ToLower(path.Ext(fileHeader.Filename))
+	if _, ok := plugin.DefaultFileTypeCheckMapping[plugin.UserAvatar][fileExt]; !ok {
 		return "", errors.BadRequest(reason.RequestFormatError).WithError(err)
 	}
 
 	newFilename := fmt.Sprintf("%s%s", uid.IDStr12(), fileExt)
 	avatarFilePath := path.Join(avatarSubPath, newFilename)
-	return us.uploadFile(ctx, file, avatarFilePath)
+	return us.uploadFile(ctx, fileHeader, avatarFilePath)
 }
 
-func (us *UploaderService) AvatarThumbFile(ctx *gin.Context, uploadPath, fileName string, size int) (
-	avatarfile []byte, err error) {
+func (us *uploaderService) AvatarThumbFile(ctx *gin.Context, fileName string, size int) (url string, err error) {
+	fileSuffix := path.Ext(fileName)
+	if _, ok := supportedThumbFileExtMapping[fileSuffix]; !ok {
+		// if file type is not supported, return original file
+		return path.Join(us.serviceConfig.UploadPath, avatarSubPath, fileName), nil
+	}
 	if size > 1024 {
 		size = 1024
 	}
+
 	thumbFileName := fmt.Sprintf("%d_%d@%s", size, size, fileName)
-	thumbfilePath := fmt.Sprintf("%s/%s/%s", uploadPath, avatarThumbSubPath, thumbFileName)
-	avatarfile, err = os.ReadFile(thumbfilePath)
+	thumbFilePath := fmt.Sprintf("%s/%s/%s", us.serviceConfig.UploadPath, avatarThumbSubPath, thumbFileName)
+	avatarFile, err := os.ReadFile(thumbFilePath)
 	if err == nil {
-		return avatarfile, nil
+		return thumbFilePath, nil
 	}
-	filePath := fmt.Sprintf("%s/avatar/%s", uploadPath, fileName)
-	avatarfile, err = os.ReadFile(filePath)
+	filePath := fmt.Sprintf("%s/%s/%s", us.serviceConfig.UploadPath, avatarSubPath, fileName)
+	avatarFile, err = os.ReadFile(filePath)
 	if err != nil {
-		return avatarfile, errors.InternalServer(reason.UnknownError).WithError(err).WithStack()
+		return "", errors.InternalServer(reason.UnknownError).WithError(err).WithStack()
 	}
-	reader := bytes.NewReader(avatarfile)
+	reader := bytes.NewReader(avatarFile)
 	img, err := imaging.Decode(reader)
 	if err != nil {
-		return avatarfile, errors.InternalServer(reason.UnknownError).WithError(err).WithStack()
+		return "", errors.InternalServer(reason.UnknownError).WithError(err).WithStack()
 	}
-	new_image := imaging.Fill(img, size, size, imaging.Center, imaging.Linear)
+
 	var buf bytes.Buffer
-	fileSuffix := path.Ext(fileName)
+	newImage := imaging.Fill(img, size, size, imaging.Center, imaging.Linear)
+	if err = imaging.Encode(&buf, newImage, supportedThumbFileExtMapping[fileSuffix]); err != nil {
+		return "", errors.InternalServer(reason.UnknownError).WithError(err).WithStack()
+	}
 
-	_, ok := FormatExts[fileSuffix]
+	if err = dir.CreateDirIfNotExist(path.Join(us.serviceConfig.UploadPath, avatarThumbSubPath)); err != nil {
+		return "", errors.InternalServer(reason.UnknownError).WithError(err).WithStack()
+	}
 
-	if !ok {
-		return avatarfile, fmt.Errorf("img extension not exist")
-	}
-	err = imaging.Encode(&buf, new_image, FormatExts[fileSuffix])
-	if err != nil {
-		return avatarfile, errors.InternalServer(reason.UnknownError).WithError(err).WithStack()
-	}
-	thumbReader := bytes.NewReader(buf.Bytes())
-	err = dir.CreateDirIfNotExist(path.Join(us.serviceConfig.UploadPath, avatarThumbSubPath))
-	if err != nil {
-		return nil, errors.InternalServer(reason.UnknownError).WithError(err).WithStack()
-	}
 	avatarFilePath := path.Join(avatarThumbSubPath, thumbFileName)
-	savefilePath := path.Join(us.serviceConfig.UploadPath, avatarFilePath)
-	out, err := os.Create(savefilePath)
+	saveFilePath := path.Join(us.serviceConfig.UploadPath, avatarFilePath)
+	out, err := os.Create(saveFilePath)
 	if err != nil {
-		return avatarfile, errors.InternalServer(reason.UnknownError).WithError(err).WithStack()
+		return "", errors.InternalServer(reason.UnknownError).WithError(err).WithStack()
 	}
 	defer out.Close()
-	_, err = io.Copy(out, thumbReader)
-	if err != nil {
-		return avatarfile, errors.InternalServer(reason.UnknownError).WithError(err).WithStack()
+
+	thumbReader := bytes.NewReader(buf.Bytes())
+	if _, err = io.Copy(out, thumbReader); err != nil {
+		return "", errors.InternalServer(reason.UnknownError).WithError(err).WithStack()
 	}
-	return buf.Bytes(), nil
+	return saveFilePath, nil
 }
 
-func (us *UploaderService) UploadPostFile(ctx *gin.Context) (
+func (us *uploaderService) UploadPostFile(ctx *gin.Context) (
 	url string, err error) {
+	url, err = us.tryToUploadByPlugin(ctx, plugin.UserPost)
+	if err != nil {
+		return "", err
+	}
+	if len(url) > 0 {
+		return url, nil
+	}
+
 	// max size
 	ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, 10*1024*1024)
-	_, file, err := ctx.Request.FormFile("file")
+	file, fileHeader, err := ctx.Request.FormFile("file")
 	if err != nil {
 		return "", errors.BadRequest(reason.RequestFormatError).WithError(err)
 	}
-	fileExt := strings.ToLower(path.Ext(file.Filename))
-	if _, ok := FormatExts[fileExt]; !ok {
+	defer file.Close()
+	fileExt := strings.ToLower(path.Ext(fileHeader.Filename))
+	if _, ok := plugin.DefaultFileTypeCheckMapping[plugin.UserPost][fileExt]; !ok {
 		return "", errors.BadRequest(reason.RequestFormatError).WithError(err)
 	}
 
 	newFilename := fmt.Sprintf("%s%s", uid.IDStr12(), fileExt)
 	avatarFilePath := path.Join(postSubPath, newFilename)
-	return us.uploadFile(ctx, file, avatarFilePath)
+	return us.uploadFile(ctx, fileHeader, avatarFilePath)
 }
 
-func (us *UploaderService) UploadBrandingFile(ctx *gin.Context) (
+func (us *uploaderService) UploadBrandingFile(ctx *gin.Context) (
 	url string, err error) {
+	url, err = us.tryToUploadByPlugin(ctx, plugin.AdminBranding)
+	if err != nil {
+		return "", err
+	}
+	if len(url) > 0 {
+		return url, nil
+	}
+
 	// max size
 	ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, 10*1024*1024)
-	_, file, err := ctx.Request.FormFile("file")
+	file, fileHeader, err := ctx.Request.FormFile("file")
 	if err != nil {
 		return "", errors.BadRequest(reason.RequestFormatError).WithError(err)
 	}
-	fileExt := strings.ToLower(path.Ext(file.Filename))
-	_, ok := FormatExts[fileExt]
-	if !ok && fileExt != ".ico" {
+	file.Close()
+	fileExt := strings.ToLower(path.Ext(fileHeader.Filename))
+	if _, ok := plugin.DefaultFileTypeCheckMapping[plugin.AdminBranding][fileExt]; !ok {
 		return "", errors.BadRequest(reason.RequestFormatError).WithError(err)
 	}
 
 	newFilename := fmt.Sprintf("%s%s", uid.IDStr12(), fileExt)
 	avatarFilePath := path.Join(brandingSubPath, newFilename)
-	return us.uploadFile(ctx, file, avatarFilePath)
+	return us.uploadFile(ctx, fileHeader, avatarFilePath)
 }
 
-func (us *UploaderService) uploadFile(ctx *gin.Context, file *multipart.FileHeader, fileSubPath string) (
+func (us *uploaderService) uploadFile(ctx *gin.Context, file *multipart.FileHeader, fileSubPath string) (
 	url string, err error) {
 	siteGeneral, err := us.siteInfoService.GetSiteGeneral(ctx)
 	if err != nil {
@@ -193,10 +244,47 @@ func (us *UploaderService) uploadFile(ctx *gin.Context, file *multipart.FileHead
 	}
 	defer src.Close()
 
-	if !checker.IsSupportedImageFile(src, filepath.Ext(fileSubPath)) {
+	if !checker.IsSupportedImageFile(filePath) {
 		return "", errors.BadRequest(reason.UploadFileUnsupportedFileFormat)
+	}
+
+	if err := removeExif(filePath); err != nil {
+		log.Error(err)
 	}
 
 	url = fmt.Sprintf("%s/uploads/%s", siteGeneral.SiteUrl, fileSubPath)
 	return url, nil
+}
+
+func (us *uploaderService) tryToUploadByPlugin(ctx *gin.Context, source plugin.UploadSource) (
+	url string, err error) {
+	_ = plugin.CallStorage(func(fn plugin.Storage) error {
+		resp := fn.UploadFile(ctx, source)
+		if resp.OriginalError != nil {
+			log.Errorf("upload file by plugin failed, err: %v", resp.OriginalError)
+			err = errors.BadRequest("").WithMsg(resp.DisplayErrorMsg.Translate(ctx)).WithError(err)
+		} else {
+			url = resp.FullURL
+		}
+		return nil
+	})
+	return url, err
+}
+
+// removeExif remove exif
+// only support jpg/jpeg/png
+func removeExif(path string) error {
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
+	if ext != "jpeg" && ext != "jpg" && ext != "png" {
+		return nil
+	}
+	img, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	noExifBytes, err := exifremove.Remove(img)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, noExifBytes, 0644)
 }

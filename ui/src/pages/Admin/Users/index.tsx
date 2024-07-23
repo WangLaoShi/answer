@@ -1,5 +1,24 @@
-import { FC } from 'react';
-import { Form, Table, Dropdown, Button, Stack } from 'react-bootstrap';
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import { FC, useEffect, useState } from 'react';
+import { Form, Table, Button, Stack } from 'react-bootstrap';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
@@ -11,22 +30,24 @@ import {
   BaseUserCard,
   Empty,
   QueryGroup,
-  Icon,
 } from '@/components';
 import * as Type from '@/common/interface';
+import { useUserModal } from '@/hooks';
 import {
-  useUserModal,
-  useChangeModal,
-  useChangeUserRoleModal,
-  useChangePasswordModal,
-  useToast,
-} from '@/hooks';
-import { useQueryUsers, addUser, updateUserPassword } from '@/services';
-import { loggedUserInfoStore } from '@/stores';
+  useQueryUsers,
+  addUsers,
+  getAdminUcAgent,
+  AdminUcAgent,
+  changeUserStatus,
+} from '@/services';
+import { loggedUserInfoStore, userCenterStore } from '@/stores';
 import { formatCount } from '@/utils';
 
+import DeleteUserModal from './components/DeleteUserModal';
+import Action from './components/Action';
+
 const UserFilterKeys: Type.UserFilterBy[] = [
-  'all',
+  'normal',
   'staff',
   'inactive',
   'suspended',
@@ -43,13 +64,23 @@ const bgMap = {
 const PAGE_SIZE = 10;
 const Users: FC = () => {
   const { t } = useTranslation('translation', { keyPrefix: 'admin.users' });
-
+  const [deleteUserModalState, setDeleteUserModalState] = useState({
+    show: false,
+    userId: '',
+  });
   const [urlSearchParams, setUrlSearchParams] = useSearchParams();
   const curFilter = urlSearchParams.get('filter') || UserFilterKeys[0];
   const curPage = Number(urlSearchParams.get('page') || '1');
   const curQuery = urlSearchParams.get('query') || '';
   const currentUser = loggedUserInfoStore((state) => state.user);
-  const Toast = useToast();
+  const { agent: ucAgent } = userCenterStore();
+  const [adminUcAgent, setAdminUcAgent] = useState<AdminUcAgent>({
+    allow_create_user: true,
+    allow_update_user_status: true,
+    allow_update_user_password: true,
+    allow_update_user_role: true,
+  });
+
   const {
     data,
     isLoading,
@@ -61,21 +92,14 @@ const Users: FC = () => {
     ...(curFilter === 'all'
       ? {}
       : curFilter === 'staff'
-      ? { staff: true }
-      : { status: curFilter }),
-  });
-  const changeModal = useChangeModal({
-    callback: refreshUsers,
-  });
-
-  const changeUserRoleModal = useChangeUserRoleModal({
-    callback: refreshUsers,
+        ? { staff: true }
+        : { status: curFilter }),
   });
 
   const userModal = useUserModal({
     onConfirm: (userModel) => {
       return new Promise((resolve, reject) => {
-        addUser(userModel)
+        addUsers(userModel)
           .then(() => {
             if (/all|staff/.test(curFilter) && curPage === 1) {
               refreshUsers();
@@ -88,60 +112,60 @@ const Users: FC = () => {
       });
     },
   });
-  const changePasswordModal = useChangePasswordModal({
-    onConfirm: (rd) => {
-      return new Promise((resolve, reject) => {
-        updateUserPassword(rd)
-          .then(() => {
-            Toast.onShow({
-              msg: t('update_password', { keyPrefix: 'toast' }),
-              variant: 'success',
-            });
-            resolve(true);
-          })
-          .catch((e) => {
-            reject(e);
-          });
-      });
-    },
-  });
-
-  const handleAction = (type, user) => {
-    const { user_id, status, role_id, username } = user;
-    if (username === currentUser.username) {
-      Toast.onShow({
-        msg: t('forbidden_operate_self', { keyPrefix: 'toast' }),
-        variant: 'warning',
-      });
-      return;
-    }
-    if (type === 'status') {
-      changeModal.onShow({
-        id: user_id,
-        type: status,
-      });
-    }
-
-    if (type === 'role') {
-      changeUserRoleModal.onShow({
-        id: user_id,
-        role_id,
-      });
-    }
-    if (type === 'password') {
-      changePasswordModal.onShow(user_id);
-    }
-  };
 
   const handleFilter = (e) => {
     urlSearchParams.set('query', e.target.value);
     urlSearchParams.delete('page');
     setUrlSearchParams(urlSearchParams);
   };
+  useEffect(() => {
+    if (ucAgent?.enabled) {
+      getAdminUcAgent().then((resp) => {
+        setAdminUcAgent(resp);
+      });
+    }
+  }, [ucAgent]);
+
+  const changeDeleteUserModalState = (modalData: {
+    show: boolean;
+    userId: string;
+  }) => {
+    setDeleteUserModalState(modalData);
+  };
+
+  const handleDelete = (val) => {
+    changeUserStatus({
+      user_id: deleteUserModalState.userId,
+      status: 'deleted',
+      remove_all_content: val,
+    }).then(() => {
+      changeDeleteUserModalState({
+        show: false,
+        userId: '',
+      });
+      refreshUsers();
+    });
+  };
+
+  const showAddUser =
+    !ucAgent?.enabled || (ucAgent?.enabled && adminUcAgent?.allow_create_user);
+  const showActionPassword =
+    !ucAgent?.enabled ||
+    (ucAgent?.enabled && adminUcAgent?.allow_update_user_password);
+
+  const showActionRole =
+    !ucAgent?.enabled ||
+    (ucAgent?.enabled && adminUcAgent?.allow_update_user_role);
+
+  const showActionStatus =
+    !ucAgent?.enabled ||
+    (ucAgent?.enabled && adminUcAgent?.allow_update_user_status);
+  const showAction = showActionPassword || showActionRole || showActionStatus;
+
   return (
     <>
       <h3 className="mb-4">{t('title')}</h3>
-      <div className="d-flex justify-content-between align-items-center mb-3">
+      <div className="d-flex flex-wrap justify-content-between align-items-center mb-3">
         <Stack direction="horizontal" gap={3}>
           <QueryGroup
             data={UserFilterKeys}
@@ -149,28 +173,34 @@ const Users: FC = () => {
             sortKey="filter"
             i18nKeyPrefix="admin.users"
           />
-          <Button
-            variant="outline-primary"
-            size="sm"
-            onClick={() => userModal.onShow()}>
-            {t('add_user')}
-          </Button>
+          {showAddUser ? (
+            <Button
+              variant="outline-primary"
+              size="sm"
+              onClick={() => userModal.onShow()}>
+              {t('add_user')}
+            </Button>
+          ) : null}
         </Stack>
 
         <Form.Control
           size="sm"
+          type="search"
           value={curQuery}
           onChange={handleFilter}
           placeholder={t('filter.placeholder')}
           style={{ width: '12.25rem' }}
+          className="mt-3 mt-sm-0"
         />
       </div>
-      <Table>
+      <Table responsive="md">
         <thead>
           <tr>
             <th>{t('name')}</th>
             <th style={{ width: '12%' }}>{t('reputation')}</th>
-            <th style={{ width: '20%' }}>{t('email')}</th>
+            <th style={{ width: '20%' }} className="min-w-15">
+              {t('email')}
+            </th>
             <th className="text-nowrap" style={{ width: '15%' }}>
               {t('created_at')}
             </th>
@@ -203,6 +233,7 @@ const Users: FC = () => {
                     avatarSearchStr="s=48"
                     avatarClass="me-2"
                     showReputation={false}
+                    nameMaxWidth="160px"
                   />
                 </td>
                 <td>{formatCount(user.rank)}</td>
@@ -232,28 +263,17 @@ const Users: FC = () => {
                     </span>
                   </td>
                 )}
-                {curFilter !== 'deleted' ? (
-                  <td className="text-end">
-                    <Dropdown>
-                      <Dropdown.Toggle variant="link" className="no-toggle">
-                        <Icon name="three-dots-vertical" />
-                      </Dropdown.Toggle>
-                      <Dropdown.Menu>
-                        <Dropdown.Item
-                          onClick={() => handleAction('password', user)}>
-                          {t('set_new_password')}
-                        </Dropdown.Item>
-                        <Dropdown.Item
-                          onClick={() => handleAction('status', user)}>
-                          {t('change_status')}
-                        </Dropdown.Item>
-                        <Dropdown.Item
-                          onClick={() => handleAction('role', user)}>
-                          {t('change_role')}
-                        </Dropdown.Item>
-                      </Dropdown.Menu>
-                    </Dropdown>
-                  </td>
+                {curFilter !== 'deleted' &&
+                (showAction || user.status === 'inactive') ? (
+                  <Action
+                    userData={user}
+                    showActionPassword={showActionPassword}
+                    showActionRole={showActionRole}
+                    showActionStatus={showActionStatus}
+                    currentUser={currentUser}
+                    refreshUsers={refreshUsers}
+                    showDeleteModal={changeDeleteUserModalState}
+                  />
                 ) : null}
               </tr>
             );
@@ -268,6 +288,17 @@ const Users: FC = () => {
           pageSize={PAGE_SIZE}
         />
       </div>
+
+      <DeleteUserModal
+        show={deleteUserModalState.show}
+        onClose={() => {
+          changeDeleteUserModalState({
+            show: false,
+            userId: '',
+          });
+        }}
+        onDelete={(val) => handleDelete(val)}
+      />
     </>
   );
 };

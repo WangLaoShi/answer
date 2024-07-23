@@ -1,19 +1,38 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package activity
 
 import (
 	"context"
 	"time"
 
-	"github.com/answerdev/answer/internal/service/activity_common"
-	"github.com/answerdev/answer/internal/service/follow"
-	"github.com/answerdev/answer/pkg/obj"
+	"github.com/apache/incubator-answer/internal/service/activity_common"
+	"github.com/apache/incubator-answer/internal/service/follow"
+	"github.com/apache/incubator-answer/pkg/obj"
 	"github.com/segmentfault/pacman/log"
 	"xorm.io/builder"
 
-	"github.com/answerdev/answer/internal/base/data"
-	"github.com/answerdev/answer/internal/base/reason"
-	"github.com/answerdev/answer/internal/entity"
-	"github.com/answerdev/answer/internal/service/unique"
+	"github.com/apache/incubator-answer/internal/base/data"
+	"github.com/apache/incubator-answer/internal/base/reason"
+	"github.com/apache/incubator-answer/internal/entity"
+	"github.com/apache/incubator-answer/internal/service/unique"
 	"github.com/segmentfault/pacman/errors"
 	"xorm.io/xorm"
 )
@@ -39,12 +58,17 @@ func NewFollowRepo(
 }
 
 func (ar *FollowRepo) Follow(ctx context.Context, objectID, userID string) error {
-	activityType, _, _, err := ar.activityRepo.GetActivityTypeByObjID(ctx, objectID, "follow")
+	objectTypeStr, err := obj.GetObjectTypeStrByObjectID(objectID)
+	if err != nil {
+		return errors.InternalServer(reason.DatabaseError).WithError(err).WithStack()
+	}
+	activityType, err := ar.activityRepo.GetActivityTypeByObjectType(ctx, objectTypeStr, "follow")
 	if err != nil {
 		return err
 	}
 
 	_, err = ar.data.DB.Transaction(func(session *xorm.Session) (result any, err error) {
+		session = session.Context(ctx)
 		var (
 			existsActivity entity.Activity
 			has            bool
@@ -101,12 +125,17 @@ func (ar *FollowRepo) Follow(ctx context.Context, objectID, userID string) error
 }
 
 func (ar *FollowRepo) FollowCancel(ctx context.Context, objectID, userID string) error {
-	activityType, _, _, err := ar.activityRepo.GetActivityTypeByObjID(ctx, objectID, "follow")
+	objectTypeStr, err := obj.GetObjectTypeStrByObjectID(objectID)
+	if err != nil {
+		return errors.InternalServer(reason.DatabaseError).WithError(err).WithStack()
+	}
+	activityType, err := ar.activityRepo.GetActivityTypeByObjectType(ctx, objectTypeStr, "follow")
 	if err != nil {
 		return err
 	}
 
 	_, err = ar.data.DB.Transaction(func(session *xorm.Session) (result any, err error) {
+		session = session.Context(ctx)
 		var (
 			existsActivity entity.Activity
 			has            bool

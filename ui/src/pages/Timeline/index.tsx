@@ -1,5 +1,24 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 import { FC, useState, useEffect } from 'react';
-import { Container, Row, Col, Form, Table } from 'react-bootstrap';
+import { Form, Table } from 'react-bootstrap';
 import { Link, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
@@ -12,10 +31,12 @@ import * as Type from '@/common/interface';
 
 import HistoryItem from './components/Item';
 
+import './index.scss';
+
 const Index: FC = () => {
   const { t } = useTranslation('translation', { keyPrefix: 'timeline' });
   const { qid = '', aid = '', tid = '' } = useParams();
-  const { is_admin } = loggedUserInfoStore((state) => state.user);
+  const { role_id } = loggedUserInfoStore((state) => state.user);
   const [showVotes, setShowVotes] = useState(false);
   const [isLoading, setLoading] = useState(false);
   const [timelineData, setTimelineData] = useState<Type.TimelineRes>();
@@ -67,8 +88,9 @@ const Index: FC = () => {
 
   if (timelineData?.object_info.object_type === 'tag') {
     linkUrl = `/tags/${
-      timelineData?.object_info.main_tag_slug_name ||
-      timelineData?.object_info.title
+      timelineData?.object_info.main_tag_slug_name
+        ? encodeURIComponent(timelineData?.object_info.main_tag_slug_name)
+        : encodeURIComponent(timelineData?.object_info.title)
     }`;
     pageTitle = `${t('title_for_tag')} '${timelineData?.object_info.title}'`;
   }
@@ -79,54 +101,50 @@ const Index: FC = () => {
     title: pageTitle,
   });
   return (
-    <Container className="py-3">
-      <Row className="py-3 justify-content-center">
-        <Col xxl={10}>
-          <h5 className="mb-4">
-            {timelineData?.object_info.object_type === 'tag'
-              ? t('tag_title')
-              : t('title')}{' '}
-            <Link to={linkUrl}>{timelineData?.object_info?.title}</Link>
-          </h5>
-          {timelineData?.object_info.object_type !== 'tag' && (
-            <Form.Check
-              className="mb-4"
-              type="switch"
-              id="custom-switch"
-              label={t('show_votes')}
-              checked={showVotes}
-              onChange={(e) => handleSwitch(e.target.checked)}
-            />
-          )}
-          <Table hover>
-            <thead>
-              <tr>
-                <th style={{ width: '20%' }}>{t('datetime')}</th>
-                <th style={{ width: '15%' }}>{t('type')}</th>
-                <th style={{ width: '19%' }}>{t('by')}</th>
-                <th>{t('comment')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {timelineData?.timeline?.map((item) => {
-                return (
-                  <HistoryItem
-                    data={item}
-                    objectInfo={timelineData?.object_info}
-                    key={item.activity_id}
-                    isAdmin={is_admin}
-                    revisionList={revisionList}
-                  />
-                );
-              })}
-            </tbody>
-          </Table>
-          {!isLoading && Number(timelineData?.timeline?.length) <= 0 && (
-            <Empty>{t('no_data')}</Empty>
-          )}
-        </Col>
-      </Row>
-    </Container>
+    <div className="py-4 mb-5">
+      <h5 className="mb-4">
+        {timelineData?.object_info.object_type === 'tag'
+          ? t('tag_title')
+          : t('title')}{' '}
+        <Link to={linkUrl}>{timelineData?.object_info?.title}</Link>
+      </h5>
+      {timelineData?.object_info.object_type !== 'tag' && (
+        <Form.Check
+          className="mb-4"
+          type="switch"
+          id="custom-switch"
+          label={t('show_votes')}
+          checked={showVotes}
+          onChange={(e) => handleSwitch(e.target.checked)}
+        />
+      )}
+      <Table hover responsive="md">
+        <thead>
+          <tr>
+            <th style={{ width: '20%' }}>{t('datetime')}</th>
+            <th style={{ width: '15%' }}>{t('type')}</th>
+            <th style={{ width: '19%' }}>{t('by')}</th>
+            <th className="min-w-15">{t('comment')}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {timelineData?.timeline?.map((item) => {
+            return (
+              <HistoryItem
+                data={item}
+                objectInfo={timelineData?.object_info}
+                key={item.activity_id}
+                isAdmin={role_id === 2}
+                revisionList={revisionList}
+              />
+            );
+          })}
+        </tbody>
+      </Table>
+      {!isLoading && Number(timelineData?.timeline?.length) <= 0 && (
+        <Empty>{t('no_data')}</Empty>
+      )}
+    </div>
   );
 };
 

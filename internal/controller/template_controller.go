@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package controller
 
 import (
@@ -5,34 +24,40 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
 
-	"github.com/answerdev/answer/internal/base/constant"
-	"github.com/answerdev/answer/internal/base/handler"
-	templaterender "github.com/answerdev/answer/internal/controller/template_render"
-	"github.com/answerdev/answer/internal/schema"
-	"github.com/answerdev/answer/internal/service/siteinfo_common"
-	"github.com/answerdev/answer/pkg/converter"
-	"github.com/answerdev/answer/pkg/htmltext"
-	"github.com/answerdev/answer/pkg/obj"
-	"github.com/answerdev/answer/ui"
+	"github.com/apache/incubator-answer/internal/base/constant"
+	"github.com/apache/incubator-answer/internal/base/handler"
+	templaterender "github.com/apache/incubator-answer/internal/controller/template_render"
+	"github.com/apache/incubator-answer/internal/entity"
+	"github.com/apache/incubator-answer/internal/schema"
+	"github.com/apache/incubator-answer/internal/service/siteinfo_common"
+	"github.com/apache/incubator-answer/pkg/checker"
+	"github.com/apache/incubator-answer/pkg/converter"
+	"github.com/apache/incubator-answer/pkg/htmltext"
+	"github.com/apache/incubator-answer/pkg/obj"
+	"github.com/apache/incubator-answer/pkg/uid"
+	"github.com/apache/incubator-answer/ui"
 	"github.com/gin-gonic/gin"
 	"github.com/segmentfault/pacman/log"
 )
 
+var SiteUrl = ""
+
 type TemplateController struct {
-	scriptPath               string
+	scriptPath               []string
 	cssPath                  string
 	templateRenderController *templaterender.TemplateRenderController
-	siteInfoService          *siteinfo_common.SiteInfoCommonService
+	siteInfoService          siteinfo_common.SiteInfoCommonService
 }
 
 // NewTemplateController new controller
 func NewTemplateController(
 	templateRenderController *templaterender.TemplateRenderController,
-	siteInfoService *siteinfo_common.SiteInfoCommonService,
+	siteInfoService siteinfo_common.SiteInfoCommonService,
 ) *TemplateController {
 	script, css := GetStyle()
 	return &TemplateController{
@@ -42,18 +67,21 @@ func NewTemplateController(
 		siteInfoService:          siteInfoService,
 	}
 }
-func GetStyle() (script, css string) {
+func GetStyle() (script []string, css string) {
 	file, err := ui.Build.ReadFile("build/index.html")
 	if err != nil {
 		return
 	}
-	scriptRegexp := regexp.MustCompile(`<script defer="defer" src="(.*)"></script>`)
-	scriptData := scriptRegexp.FindStringSubmatch(string(file))
+	scriptRegexp := regexp.MustCompile(`<script defer="defer" src="([^"]*)"></script>`)
+	scriptData := scriptRegexp.FindAllStringSubmatch(string(file), -1)
+	for _, s := range scriptData {
+		if len(s) == 2 {
+			script = append(script, s[1])
+		}
+	}
+
 	cssRegexp := regexp.MustCompile(`<link href="(.*)" rel="stylesheet">`)
 	cssListData := cssRegexp.FindStringSubmatch(string(file))
-	if len(scriptData) == 2 {
-		script = scriptData[1]
-	}
 	if len(cssListData) == 2 {
 		css = cssListData[1]
 	}
@@ -66,6 +94,7 @@ func (tc *TemplateController) SiteInfo(ctx *gin.Context) *schema.TemplateSiteInf
 	if err != nil {
 		log.Error(err)
 	}
+	SiteUrl = resp.General.SiteUrl
 	resp.Interface, err = tc.siteInfoService.GetSiteInterface(ctx)
 	if err != nil {
 		log.Error(err)
@@ -111,7 +140,7 @@ func (tc *TemplateController) Index(ctx *gin.Context) {
 	siteInfo.Canonical = siteInfo.General.SiteUrl
 
 	UrlUseTitle := false
-	if siteInfo.SiteSeo.PermaLink == schema.PermaLinkQuestionIDAndTitle {
+	if siteInfo.SiteSeo.Permalink == constant.PermalinkQuestionIDAndTitle {
 		UrlUseTitle = true
 	}
 	siteInfo.Title = ""
@@ -144,7 +173,7 @@ func (tc *TemplateController) QuestionList(ctx *gin.Context) {
 	}
 
 	UrlUseTitle := false
-	if siteInfo.SiteSeo.PermaLink == schema.PermaLinkQuestionIDAndTitle {
+	if siteInfo.SiteSeo.Permalink == constant.PermalinkQuestionIDAndTitle {
 		UrlUseTitle = true
 	}
 	siteInfo.Title = fmt.Sprintf("Questions - %s", siteInfo.General.Name)
@@ -156,37 +185,80 @@ func (tc *TemplateController) QuestionList(ctx *gin.Context) {
 }
 
 func (tc *TemplateController) QuestionInfoeRdirect(ctx *gin.Context, siteInfo *schema.TemplateSiteInfoResp, correctTitle bool) (jump bool, url string) {
-	id := ctx.Param("id")
+	questionID := ctx.Param("id")
 	title := ctx.Param("title")
+	answerID := uid.DeShortID(title)
 	titleIsAnswerID := false
+	needChangeShortID := false
 
-	objectType, objectTypeerr := obj.GetObjectTypeStrByObjectID(title)
-	if objectTypeerr == nil {
-		if objectType == constant.AnswerObjectType {
-			titleIsAnswerID = true
+	objectType, err := obj.GetObjectTypeStrByObjectID(answerID)
+	if err == nil && objectType == constant.AnswerObjectType {
+		titleIsAnswerID = true
+	}
+
+	siteSeo, err := tc.siteInfoService.GetSiteSeo(ctx)
+	if err != nil {
+		return false, ""
+	}
+	isShortID := uid.IsShortID(questionID)
+	if siteSeo.IsShortLink() {
+		if !isShortID {
+			questionID = uid.EnShortID(questionID)
+			needChangeShortID = true
+		}
+		if titleIsAnswerID {
+			answerID = uid.EnShortID(answerID)
+		}
+	} else {
+		if isShortID {
+			needChangeShortID = true
+			questionID = uid.DeShortID(questionID)
+		}
+		if titleIsAnswerID {
+			answerID = uid.DeShortID(answerID)
 		}
 	}
 
-	url = fmt.Sprintf("%s/questions/%s", siteInfo.General.SiteUrl, id)
-	if siteInfo.SiteSeo.PermaLink == schema.PermaLinkQuestionID {
+	if _, err := tc.templateRenderController.AnswerDetail(ctx, answerID); err != nil {
+		answerID = ""
+		titleIsAnswerID = false
+	}
+
+	url = fmt.Sprintf("%s/questions/%s", siteInfo.General.SiteUrl, questionID)
+	if siteInfo.SiteSeo.Permalink == constant.PermalinkQuestionID || siteInfo.SiteSeo.Permalink == constant.PermalinkQuestionIDByShortID {
+		if len(ctx.Request.URL.Query()) > 0 {
+			url = fmt.Sprintf("%s?%s", url, ctx.Request.URL.RawQuery)
+		}
+		if needChangeShortID {
+			return true, url
+		}
 		//not have title
 		if titleIsAnswerID || len(title) == 0 {
 			return false, ""
 		}
+
 		return true, url
 	} else {
-		//have title
-		if len(title) > 0 && !titleIsAnswerID && correctTitle {
-			return false, ""
-		}
-		detail, err := tc.templateRenderController.QuestionDetail(ctx, id)
+
+		detail, err := tc.templateRenderController.QuestionDetail(ctx, questionID)
 		if err != nil {
 			tc.Page404(ctx)
 			return
 		}
 		url = fmt.Sprintf("%s/%s", url, htmltext.UrlTitle(detail.Title))
 		if titleIsAnswerID {
-			url = fmt.Sprintf("%s/%s", url, title)
+			url = fmt.Sprintf("%s/%s", url, answerID)
+		}
+
+		if len(ctx.Request.URL.Query()) > 0 {
+			url = fmt.Sprintf("%s?%s", url, ctx.Request.URL.RawQuery)
+		}
+		//have title
+		if len(title) > 0 && !titleIsAnswerID && correctTitle {
+			if needChangeShortID {
+				return true, url
+			}
+			return false, ""
 		}
 		return true, url
 	}
@@ -197,8 +269,8 @@ func (tc *TemplateController) QuestionInfo(ctx *gin.Context) {
 	id := ctx.Param("id")
 	title := ctx.Param("title")
 	answerid := ctx.Param("answerid")
-
-	if id == "ask" {
+	if checker.IsQuestionsIgnorePath(id) {
+		// if id == "ask" {
 		file, err := ui.Build.ReadFile("build/index.html")
 		if err != nil {
 			log.Error(err)
@@ -244,9 +316,11 @@ func (tc *TemplateController) QuestionInfo(ctx *gin.Context) {
 	}
 
 	// comments
-	objectIDs := []string{id}
+
+	objectIDs := []string{uid.DeShortID(id)}
 	for _, answer := range answers {
-		objectIDs = append(objectIDs, answer.ID)
+		answerID := uid.DeShortID(answer.ID)
+		objectIDs = append(objectIDs, answerID)
 	}
 	comments, err := tc.templateRenderController.CommentList(ctx, objectIDs)
 	if err != nil {
@@ -254,7 +328,7 @@ func (tc *TemplateController) QuestionInfo(ctx *gin.Context) {
 		return
 	}
 	siteInfo.Canonical = fmt.Sprintf("%s/questions/%s/%s", siteInfo.General.SiteUrl, id, encodeTitle)
-	if siteInfo.SiteSeo.PermaLink == schema.PermaLinkQuestionID {
+	if siteInfo.SiteSeo.Permalink == constant.PermalinkQuestionID || siteInfo.SiteSeo.Permalink == constant.PermalinkQuestionIDByShortID {
 		siteInfo.Canonical = fmt.Sprintf("%s/questions/%s", siteInfo.General.SiteUrl, id)
 	}
 	jsonLD := &schema.QAPageJsonLD{}
@@ -268,6 +342,7 @@ func (tc *TemplateController) QuestionInfo(ctx *gin.Context) {
 	jsonLD.MainEntity.DateCreated = time.Unix(detail.CreateTime, 0)
 	jsonLD.MainEntity.Author.Type = "Person"
 	jsonLD.MainEntity.Author.Name = detail.UserInfo.DisplayName
+	jsonLD.MainEntity.Author.URL = fmt.Sprintf("%s/users/%s", siteInfo.General.SiteUrl, detail.UserInfo.Username)
 	answerList := make([]*schema.SuggestedAnswerItem, 0)
 	for _, answer := range answers {
 		if answer.Accepted == schema.AnswerAcceptedEnable {
@@ -279,6 +354,7 @@ func (tc *TemplateController) QuestionInfo(ctx *gin.Context) {
 			acceptedAnswerItem.URL = fmt.Sprintf("%s/%s", siteInfo.Canonical, answer.ID)
 			acceptedAnswerItem.Author.Type = "Person"
 			acceptedAnswerItem.Author.Name = answer.UserInfo.DisplayName
+			acceptedAnswerItem.Author.URL = fmt.Sprintf("%s/users/%s", siteInfo.General.SiteUrl, answer.UserInfo.Username)
 			jsonLD.MainEntity.AcceptedAnswer = acceptedAnswerItem
 		} else {
 			item := &schema.SuggestedAnswerItem{}
@@ -289,6 +365,7 @@ func (tc *TemplateController) QuestionInfo(ctx *gin.Context) {
 			item.URL = fmt.Sprintf("%s/%s", siteInfo.Canonical, answer.ID)
 			item.Author.Type = "Person"
 			item.Author.Name = answer.UserInfo.DisplayName
+			item.Author.URL = fmt.Sprintf("%s/users/%s", siteInfo.General.SiteUrl, answer.UserInfo.Username)
 			answerList = append(answerList, item)
 		}
 
@@ -312,6 +389,7 @@ func (tc *TemplateController) QuestionInfo(ctx *gin.Context) {
 		"detail":   detail,
 		"answers":  answers,
 		"comments": comments,
+		"noindex":  detail.Show == entity.QuestionHide,
 	})
 }
 
@@ -369,7 +447,7 @@ func (tc *TemplateController) TagInfo(ctx *gin.Context) {
 	siteInfo.Keywords = taginifo.DisplayName
 
 	UrlUseTitle := false
-	if siteInfo.SiteSeo.PermaLink == schema.PermaLinkQuestionIDAndTitle {
+	if siteInfo.SiteSeo.Permalink == constant.PermalinkQuestionIDAndTitle {
 		UrlUseTitle = true
 	}
 	siteInfo.Title = fmt.Sprintf("'%s' Questions - %s", taginifo.DisplayName, siteInfo.General.Name)
@@ -389,7 +467,8 @@ func (tc *TemplateController) UserInfo(ctx *gin.Context) {
 		tc.Page404(ctx)
 		return
 	}
-	exist := constant.ExistInPathIgnore(username)
+
+	exist := checker.IsUsersIgnorePath(username)
 	if exist {
 		file, err := ui.Build.ReadFile("build/index.html")
 		if err != nil {
@@ -404,12 +483,7 @@ func (tc *TemplateController) UserInfo(ctx *gin.Context) {
 	req := &schema.GetOtherUserInfoByUsernameReq{}
 	req.Username = username
 	userinfo, err := tc.templateRenderController.UserInfo(ctx, req)
-
 	if err != nil {
-		tc.Page404(ctx)
-		return
-	}
-	if !userinfo.Has {
 		tc.Page404(ctx)
 		return
 	}
@@ -419,7 +493,7 @@ func (tc *TemplateController) UserInfo(ctx *gin.Context) {
 	siteInfo.Title = fmt.Sprintf("%s - %s", username, siteInfo.General.Name)
 	tc.html(ctx, http.StatusOK, "homepage.html", siteInfo, gin.H{
 		"userinfo": userinfo,
-		"bio":      template.HTML(userinfo.Info.BioHTML),
+		"bio":      template.HTML(userinfo.BioHTML),
 	})
 
 }
@@ -430,6 +504,10 @@ func (tc *TemplateController) Page404(ctx *gin.Context) {
 
 func (tc *TemplateController) html(ctx *gin.Context, code int, tpl string, siteInfo *schema.TemplateSiteInfoResp, data gin.H) {
 	data["siteinfo"] = siteInfo
+	data["baseURL"] = ""
+	if parsedUrl, err := url.Parse(siteInfo.General.SiteUrl); err == nil {
+		data["baseURL"] = parsedUrl.Path
+	}
 	data["scriptPath"] = tc.scriptPath
 	data["cssPath"] = tc.cssPath
 	data["keywords"] = siteInfo.Keywords
@@ -443,14 +521,18 @@ func (tc *TemplateController) html(ctx *gin.Context, code int, tpl string, siteI
 	data["description"] = siteInfo.Description
 	data["language"] = handler.GetLang(ctx)
 	data["timezone"] = siteInfo.Interface.TimeZone
+	language := strings.Replace(siteInfo.Interface.Language, "_", "-", -1)
+	data["lang"] = language
 	data["HeadCode"] = siteInfo.CustomCssHtml.CustomHead
 	data["HeaderCode"] = siteInfo.CustomCssHtml.CustomHeader
 	data["FooterCode"] = siteInfo.CustomCssHtml.CustomFooter
 	data["Version"] = constant.Version
+	data["Revision"] = constant.Revision
 	_, ok := data["path"]
 	if !ok {
 		data["path"] = ""
 	}
+	ctx.Header("X-Frame-Options", "DENY")
 	ctx.HTML(code, tpl, data)
 }
 

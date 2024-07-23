@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package translator
 
 import (
@@ -20,6 +39,8 @@ var GlobalTrans i18n.Translator
 type LangOption struct {
 	Label string `json:"label"`
 	Value string `json:"value"`
+	// Translation completion percentage
+	Progress int `json:"progress"`
 }
 
 // DefaultLangOption default language option. If user config the language is default, the language option is admin choose.
@@ -47,6 +68,7 @@ func NewTranslator(c *I18n) (tr i18n.Translator, err error) {
 		if filepath.Ext(file.Name()) != ".yaml" && file.Name() != "i18n.yaml" {
 			continue
 		}
+		log.Debugf("try to read file: %s", file.Name())
 		buf, err := os.ReadFile(filepath.Join(c.BundleDir, file.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("read file failed: %s %s", file.Name(), err)
@@ -56,6 +78,7 @@ func NewTranslator(c *I18n) (tr i18n.Translator, err error) {
 		originalTr := struct {
 			Backend map[string]map[string]interface{} `yaml:"backend"`
 			UI      map[string]interface{}            `yaml:"ui"`
+			Plugin  map[string]interface{}            `yaml:"plugin"`
 		}{}
 		if err = yaml.Unmarshal(buf, &originalTr); err != nil {
 			return nil, err
@@ -66,6 +89,7 @@ func NewTranslator(c *I18n) (tr i18n.Translator, err error) {
 		}
 		translation["backend"] = originalTr.Backend
 		translation["ui"] = originalTr.UI
+		translation["plugin"] = originalTr.Plugin
 
 		content, err := yaml.Marshal(translation)
 		if err != nil {
@@ -94,6 +118,9 @@ func NewTranslator(c *I18n) (tr i18n.Translator, err error) {
 		return nil, fmt.Errorf("i18n file parsing failed: %s", err)
 	}
 	LanguageOptions = s.LangOption
+	for _, option := range LanguageOptions {
+		option.Label = fmt.Sprintf("%s (%d%%)", option.Label, option.Progress)
+	}
 	return GlobalTrans, err
 }
 
@@ -112,9 +139,24 @@ func CheckLanguageIsValid(lang string) bool {
 
 // Tr use language to translate data. If this language translation is not available, return default english translation.
 func Tr(lang i18n.Language, data string) string {
+	if GlobalTrans == nil {
+		return data
+	}
 	translation := GlobalTrans.Tr(lang, data)
 	if translation == data {
 		return GlobalTrans.Tr(i18n.DefaultLanguage, data)
+	}
+	return translation
+}
+
+// TrWithData translate key with template data, it will replace the template data {{ .PlaceHolder }} in the translation.
+func TrWithData(lang i18n.Language, key string, templateData any) string {
+	if GlobalTrans == nil {
+		return key
+	}
+	translation := GlobalTrans.TrWithData(lang, key, templateData)
+	if translation == key {
+		return GlobalTrans.TrWithData(i18n.DefaultLanguage, key, templateData)
 	}
 	return translation
 }

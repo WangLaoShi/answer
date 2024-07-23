@@ -1,16 +1,36 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package revision_common
 
 import (
 	"context"
 
-	"github.com/answerdev/answer/internal/base/reason"
-	"github.com/answerdev/answer/internal/service/revision"
-	usercommon "github.com/answerdev/answer/internal/service/user_common"
+	"github.com/apache/incubator-answer/internal/base/reason"
+	"github.com/apache/incubator-answer/internal/service/revision"
+	usercommon "github.com/apache/incubator-answer/internal/service/user_common"
+	"github.com/apache/incubator-answer/pkg/uid"
 	"github.com/segmentfault/pacman/errors"
 	"github.com/segmentfault/pacman/log"
 
-	"github.com/answerdev/answer/internal/entity"
-	"github.com/answerdev/answer/internal/schema"
+	"github.com/apache/incubator-answer/internal/entity"
+	"github.com/apache/incubator-answer/internal/schema"
 	"github.com/jinzhu/copier"
 )
 
@@ -20,7 +40,9 @@ type RevisionService struct {
 	userRepo     usercommon.UserRepo
 }
 
-func NewRevisionService(revisionRepo revision.RevisionRepo, userRepo usercommon.UserRepo) *RevisionService {
+func NewRevisionService(revisionRepo revision.RevisionRepo,
+	userRepo usercommon.UserRepo,
+) *RevisionService {
 	return &RevisionService{
 		revisionRepo: revisionRepo,
 		userRepo:     userRepo,
@@ -31,8 +53,7 @@ func (rs *RevisionService) GetUnreviewedRevisionCount(ctx context.Context, req *
 	if len(req.GetCanReviewObjectTypes()) == 0 {
 		return 0, nil
 	}
-	_, count, err = rs.revisionRepo.GetUnreviewedRevisionPage(ctx, req.Page, 1, req.GetCanReviewObjectTypes())
-	return count, err
+	return rs.revisionRepo.CountUnreviewedRevision(ctx, req.GetCanReviewObjectTypes())
 }
 
 // AddRevision add revision
@@ -42,6 +63,7 @@ func (rs *RevisionService) GetUnreviewedRevisionCount(ctx context.Context, req *
 // example: user can edit the object, but need audit, the revision_id will be updated when admin approved
 func (rs *RevisionService) AddRevision(ctx context.Context, req *schema.AddRevisionDTO, autoUpdateRevisionID bool) (
 	revisionID string, err error) {
+	req.ObjectID = uid.DeShortID(req.ObjectID)
 	rev := &entity.Revision{}
 	_ = copier.Copy(rev, req)
 	err = rs.revisionRepo.AddRevision(ctx, rev, autoUpdateRevisionID)
@@ -67,6 +89,7 @@ func (rs *RevisionService) GetRevision(ctx context.Context, revisionID string) (
 
 // ExistUnreviewedByObjectID
 func (rs *RevisionService) ExistUnreviewedByObjectID(ctx context.Context, objectID string) (revision *entity.Revision, exist bool, err error) {
+	objectID = uid.DeShortID(objectID)
 	revision, exist, err = rs.revisionRepo.ExistUnreviewedByObjectID(ctx, objectID)
 	return revision, exist, err
 }

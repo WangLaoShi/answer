@@ -1,5 +1,24 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 import { memo, FC, useEffect, useRef } from 'react';
-import { Button } from 'react-bootstrap';
+import { Button, Alert, Badge } from 'react-bootstrap';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router-dom';
 
@@ -11,36 +30,38 @@ import {
   Comment,
   FormatTime,
   htmlRender,
+  ImgViewer,
 } from '@/components';
 import { scrollToElementTop, bgFadeOut } from '@/utils';
 import { AnswerItem } from '@/common/interface';
 import { acceptanceAnswer } from '@/services';
+import { useRenderHtmlPlugin } from '@/utils/pluginKit';
 
 interface Props {
   data: AnswerItem;
   /** router answer id */
   aid?: string;
-  /** is author */
-  isAuthor: boolean;
+  canAccept: boolean;
   questionTitle: string;
-  slugTitle: string;
   isLogged: boolean;
   callback: (type: string) => void;
 }
 const Index: FC<Props> = ({
   aid,
   data,
-  isAuthor,
   isLogged,
   questionTitle = '',
-  slugTitle,
   callback,
+  canAccept = false,
 }) => {
   const { t } = useTranslation('translation', {
     keyPrefix: 'question_detail',
   });
   const [searchParams] = useSearchParams();
   const answerRef = useRef<HTMLDivElement>(null);
+
+  useRenderHtmlPlugin(answerRef);
+
   const acceptAnswer = () => {
     acceptanceAnswer({
       question_id: data.question_id,
@@ -67,17 +88,41 @@ const Index: FC<Props> = ({
       }, 100);
     }
   }, [data.id, answerRef.current]);
+
   if (!data?.id) {
     return null;
   }
+
   return (
     <div id={data.id} ref={answerRef} className="answer-item py-4">
-      <article
-        dangerouslySetInnerHTML={{ __html: data?.html }}
-        className="fmt text-break text-wrap"
-      />
+      {data.status === 10 && (
+        <Alert variant="danger" className="mb-4">
+          {t('post_deleted', { keyPrefix: 'messages' })}
+        </Alert>
+      )}
+      {data.status === 11 && (
+        <Alert variant="secondary" className="mb-4">
+          {t('post_pending', { keyPrefix: 'messages' })}
+        </Alert>
+      )}
+
+      {data?.accepted === 2 && (
+        <div className="mb-3 lh-1">
+          <Badge bg="success" pill>
+            <Icon name="check-circle-fill me-1" />
+            Best answer
+          </Badge>
+        </div>
+      )}
+      <ImgViewer>
+        <article
+          className="fmt text-break text-wrap"
+          dangerouslySetInnerHTML={{ __html: data?.html }}
+        />
+      </ImgViewer>
       <div className="d-flex align-items-center mt-4">
         <Actions
+          source="answer"
           data={{
             id: data?.id,
             isHate: data?.vote_status === 'vote_down',
@@ -90,24 +135,17 @@ const Index: FC<Props> = ({
           }}
         />
 
-        {data?.accepted === 2 && (
+        {canAccept && (
           <Button
-            disabled={!isAuthor}
-            variant="outline-success"
-            className="ms-3 active opacity-100 bg-success text-white"
-            onClick={acceptAnswer}>
-            <Icon name="check-circle-fill" className="me-2" />
-            <span>{t('answers.btn_accepted')}</span>
-          </Button>
-        )}
-
-        {isAuthor && data.accepted === 1 && (
-          <Button
-            variant="outline-success"
+            variant={data.accepted === 2 ? 'success' : 'outline-success'}
             className="ms-3"
             onClick={acceptAnswer}>
             <Icon name="check-circle-fill" className="me-2" />
-            <span>{t('answers.btn_accept')}</span>
+            <span>
+              {data.accepted === 2
+                ? t('answers.btn_accepted')
+                : t('answers.btn_accept')}
+            </span>
           </Button>
         )}
       </div>
@@ -121,7 +159,6 @@ const Index: FC<Props> = ({
             type="answer"
             isAccepted={data.accepted === 2}
             title={questionTitle}
-            slugTitle={slugTitle}
             callback={callback}
           />
         </div>
@@ -140,14 +177,14 @@ const Index: FC<Props> = ({
               <FormatTime
                 time={Number(data.update_time)}
                 preFix={t('edit')}
-                className="link-secondary fs-14"
+                className="link-secondary small"
               />
             </Link>
           ) : (
             <FormatTime
               time={Number(data.update_time)}
               preFix={t('edit')}
-              className="text-secondary fs-14"
+              className="text-secondary small"
             />
           )}
         </div>

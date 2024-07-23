@@ -1,15 +1,35 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package notification
 
 import (
 	"context"
 	"time"
 
-	"github.com/answerdev/answer/internal/base/data"
-	"github.com/answerdev/answer/internal/base/pager"
-	"github.com/answerdev/answer/internal/base/reason"
-	"github.com/answerdev/answer/internal/entity"
-	"github.com/answerdev/answer/internal/schema"
-	notficationcommon "github.com/answerdev/answer/internal/service/notification_common"
+	"github.com/apache/incubator-answer/internal/base/data"
+	"github.com/apache/incubator-answer/internal/base/pager"
+	"github.com/apache/incubator-answer/internal/base/reason"
+	"github.com/apache/incubator-answer/internal/entity"
+	"github.com/apache/incubator-answer/internal/schema"
+	notficationcommon "github.com/apache/incubator-answer/internal/service/notification_common"
+	"github.com/apache/incubator-answer/pkg/uid"
 	"github.com/segmentfault/pacman/errors"
 )
 
@@ -27,7 +47,8 @@ func NewNotificationRepo(data *data.Data) notficationcommon.NotificationRepo {
 
 // AddNotification add notification
 func (nr *notificationRepo) AddNotification(ctx context.Context, notification *entity.Notification) (err error) {
-	_, err = nr.data.DB.Insert(notification)
+	notification.ObjectID = uid.DeShortID(notification.ObjectID)
+	_, err = nr.data.DB.Context(ctx).Insert(notification)
 	if err != nil {
 		return errors.InternalServer(reason.DatabaseError).WithError(err).WithStack()
 	}
@@ -37,7 +58,8 @@ func (nr *notificationRepo) AddNotification(ctx context.Context, notification *e
 func (nr *notificationRepo) UpdateNotificationContent(ctx context.Context, notification *entity.Notification) (err error) {
 	now := time.Now()
 	notification.UpdatedAt = now
-	_, err = nr.data.DB.Where("id =?", notification.ID).Cols("content", "updated_at").Update(notification)
+	notification.ObjectID = uid.DeShortID(notification.ObjectID)
+	_, err = nr.data.DB.Context(ctx).Where("id =?", notification.ID).Cols("content", "updated_at").Update(notification)
 	if err != nil {
 		return errors.InternalServer(reason.DatabaseError).WithError(err).WithStack()
 	}
@@ -47,7 +69,7 @@ func (nr *notificationRepo) UpdateNotificationContent(ctx context.Context, notif
 func (nr *notificationRepo) ClearUnRead(ctx context.Context, userID string, notificationType int) (err error) {
 	info := &entity.Notification{}
 	info.IsRead = schema.NotificationRead
-	_, err = nr.data.DB.Where("user_id =?", userID).And("type =?", notificationType).Cols("is_read").Update(info)
+	_, err = nr.data.DB.Context(ctx).Where("user_id =?", userID).And("type =?", notificationType).Cols("is_read").Update(info)
 	if err != nil {
 		return errors.InternalServer(reason.DatabaseError).WithError(err).WithStack()
 	}
@@ -57,7 +79,7 @@ func (nr *notificationRepo) ClearUnRead(ctx context.Context, userID string, noti
 func (nr *notificationRepo) ClearIDUnRead(ctx context.Context, userID string, id string) (err error) {
 	info := &entity.Notification{}
 	info.IsRead = schema.NotificationRead
-	_, err = nr.data.DB.Where("user_id =?", userID).And("id =?", id).Cols("is_read").Update(info)
+	_, err = nr.data.DB.Context(ctx).Where("user_id =?", userID).And("id =?", id).Cols("is_read").Update(info)
 	if err != nil {
 		return errors.InternalServer(reason.DatabaseError).WithError(err).WithStack()
 	}
@@ -66,7 +88,7 @@ func (nr *notificationRepo) ClearIDUnRead(ctx context.Context, userID string, id
 
 func (nr *notificationRepo) GetById(ctx context.Context, id string) (*entity.Notification, bool, error) {
 	info := &entity.Notification{}
-	exist, err := nr.data.DB.Where("id = ? ", id).Get(info)
+	exist, err := nr.data.DB.Context(ctx).Where("id = ? ", id).Get(info)
 	if err != nil {
 		err = errors.InternalServer(reason.DatabaseError).WithError(err).WithStack()
 		return info, false, err
@@ -76,7 +98,7 @@ func (nr *notificationRepo) GetById(ctx context.Context, id string) (*entity.Not
 
 func (nr *notificationRepo) GetByUserIdObjectIdTypeId(ctx context.Context, userID, objectID string, notificationType int) (*entity.Notification, bool, error) {
 	info := &entity.Notification{}
-	exist, err := nr.data.DB.Where("user_id = ? ", userID).And("object_id = ?", objectID).And("type = ?", notificationType).Get(info)
+	exist, err := nr.data.DB.Context(ctx).Where("user_id = ? ", userID).And("object_id = ?", objectID).And("type = ?", notificationType).Get(info)
 	if err != nil {
 		err = errors.InternalServer(reason.DatabaseError).WithError(err).WithStack()
 		return info, false, err
@@ -91,11 +113,15 @@ func (nr *notificationRepo) GetNotificationPage(ctx context.Context, searchCond 
 		return notificationList, 0, nil
 	}
 
-	session := nr.data.DB.NewSession()
+	session := nr.data.DB.Context(ctx)
 	session = session.Desc("updated_at")
+
 	cond := &entity.Notification{
 		UserID: searchCond.UserID,
 		Type:   searchCond.Type,
+	}
+	if searchCond.InboxType > 0 {
+		cond.MsgType = searchCond.InboxType
 	}
 	total, err = pager.Help(searchCond.Page, searchCond.PageSize, &notificationList, cond, session)
 	if err != nil {

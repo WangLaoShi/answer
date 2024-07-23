@@ -1,12 +1,29 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package schema
 
 import (
 	"strings"
 
-	"github.com/answerdev/answer/internal/base/reason"
-	"github.com/answerdev/answer/internal/base/validator"
-	"github.com/answerdev/answer/pkg/converter"
-	"github.com/segmentfault/pacman/errors"
+	"github.com/apache/incubator-answer/internal/base/validator"
+	"github.com/apache/incubator-answer/pkg/converter"
 )
 
 // SearchTagLikeReq get tag list all request
@@ -27,13 +44,11 @@ type GetTagInfoReq struct {
 	// tag id
 	ID string `validate:"omitempty" form:"id"`
 	// tag slug name
-	Name string `validate:"omitempty,gt=0,lte=35" form:"name"`
-	// user id
-	UserID string `json:"-"`
-	// whether user can edit it
-	CanEdit bool `json:"-"`
-	// whether user can delete it
-	CanDelete bool `json:"-"`
+	Name       string `validate:"omitempty,gt=0,lte=35" form:"name"`
+	UserID     string `json:"-"`
+	CanEdit    bool   `json:"-"`
+	CanDelete  bool   `json:"-"`
+	CanRecover bool   `json:"-"`
 }
 
 type GetTamplateTagInfoReq struct {
@@ -48,40 +63,25 @@ type GetTamplateTagInfoReq struct {
 }
 
 func (r *GetTagInfoReq) Check() (errFields []*validator.FormErrorField, err error) {
-	if len(r.ID) == 0 && len(r.Name) == 0 {
-		return nil, errors.BadRequest(reason.RequestFormatError)
-	}
 	r.Name = strings.ToLower(r.Name)
 	return nil, nil
 }
 
 // GetTagResp get tag response
 type GetTagResp struct {
-	// tag id
-	TagID string `json:"tag_id"`
-	// created time
-	CreatedAt int64 `json:"created_at"`
-	// updated time
-	UpdatedAt int64 `json:"updated_at"`
-	// slug name
-	SlugName string `json:"slug_name"`
-	// display name
-	DisplayName string `json:"display_name"`
-	// excerpt
-	Excerpt string `json:"excerpt"`
-	// original text
-	OriginalText string `json:"original_text"`
-	// parsed text
-	ParsedText string `json:"parsed_text"`
-	// description text
-	Description string `json:"description"`
-	// follower amount
-	FollowCount int `json:"follow_count"`
-	// question amount
-	QuestionCount int `json:"question_count"`
-	// is follower
-	IsFollower bool `json:"is_follower"`
-	// MemberActions
+	TagID         string                    `json:"tag_id"`
+	CreatedAt     int64                     `json:"created_at"`
+	UpdatedAt     int64                     `json:"updated_at"`
+	SlugName      string                    `json:"slug_name"`
+	DisplayName   string                    `json:"display_name"`
+	Excerpt       string                    `json:"excerpt"`
+	OriginalText  string                    `json:"original_text"`
+	ParsedText    string                    `json:"parsed_text"`
+	Description   string                    `json:"description"`
+	FollowCount   int                       `json:"follow_count"`
+	QuestionCount int                       `json:"question_count"`
+	IsFollower    bool                      `json:"is_follower"`
+	Status        string                    `json:"status"`
 	MemberActions []*PermissionMemberAction `json:"member_actions"`
 	// if main tag slug name is not empty, this tag is synonymous with the main tag
 	MainTagSlugName string `json:"main_tag_slug_name"`
@@ -90,7 +90,7 @@ type GetTagResp struct {
 }
 
 func (tr *GetTagResp) GetExcerpt() {
-	excerpt := strings.TrimSpace(tr.OriginalText)
+	excerpt := strings.TrimSpace(tr.ParsedText)
 	idx := strings.Index(excerpt, "\n")
 	if idx >= 0 {
 		excerpt = excerpt[0:idx]
@@ -108,6 +108,8 @@ type GetTagPageResp struct {
 	DisplayName string `json:"display_name"`
 	// excerpt
 	Excerpt string `json:"excerpt"`
+	//description
+	Description string `json:"description"`
 	// original text
 	OriginalText string `json:"original_text"`
 	// parsed_text
@@ -127,7 +129,7 @@ type GetTagPageResp struct {
 }
 
 func (tr *GetTagPageResp) GetExcerpt() {
-	excerpt := strings.TrimSpace(tr.OriginalText)
+	excerpt := strings.TrimSpace(tr.ParsedText)
 	idx := strings.Index(excerpt, "\n")
 	if idx >= 0 {
 		excerpt = excerpt[0:idx]
@@ -161,6 +163,31 @@ type RemoveTagReq struct {
 	UserID string `json:"-"`
 }
 
+// AddTagReq add tag request
+type AddTagReq struct {
+	// slug_name
+	SlugName string `validate:"required,gt=0,lte=35" json:"slug_name"`
+	// display_name
+	DisplayName string `validate:"required,gt=0,lte=35" json:"display_name"`
+	// original text
+	OriginalText string `validate:"required,gt=0,lte=65536" json:"original_text"`
+	// parsed text
+	ParsedText string `json:"-"`
+	// user id
+	UserID string `json:"-"`
+}
+
+func (req *AddTagReq) Check() (errFields []*validator.FormErrorField, err error) {
+	req.ParsedText = converter.Markdown2HTML(req.OriginalText)
+	req.SlugName = strings.ToLower(req.SlugName)
+	return nil, nil
+}
+
+// AddTagResp add tag response
+type AddTagResp struct {
+	SlugName string `json:"slug_name"`
+}
+
 // UpdateTagReq update tag request
 type UpdateTagReq struct {
 	// tag_id
@@ -181,11 +208,14 @@ type UpdateTagReq struct {
 }
 
 func (r *UpdateTagReq) Check() (errFields []*validator.FormErrorField, err error) {
-	if len(r.EditSummary) == 0 {
-		r.EditSummary = "tag.edit.summary"
-	}
 	r.ParsedText = converter.Markdown2HTML(r.OriginalText)
 	return nil, nil
+}
+
+// RecoverTagReq update tag request
+type RecoverTagReq struct {
+	TagID  string `validate:"required" json:"tag_id"`
+	UserID string `json:"-"`
 }
 
 // UpdateTagResp update tag response
@@ -269,7 +299,8 @@ type GetFollowingTagsResp struct {
 }
 
 type SearchTagLikeResp struct {
-	SlugName  string `json:"slug_name"`
-	Recommend bool   `json:"recommend"`
-	Reserved  bool   `json:"reserved"`
+	SlugName    string `json:"slug_name"`
+	DisplayName string `json:"display_name"`
+	Recommend   bool   `json:"recommend"`
+	Reserved    bool   `json:"reserved"`
 }

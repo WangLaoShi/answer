@@ -1,22 +1,32 @@
-FROM amd64/node AS node-builder
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 
-LABEL maintainer="mingcheng<mc@sf.com>"
-
-COPY . /answer
-WORKDIR /answer
-RUN make install-ui-packages ui && mv ui/build /tmp
-
-# stage2 build the main binary within static resource
 FROM golang:1.19-alpine AS golang-builder
 LABEL maintainer="aichy@sf.com"
 
 ARG GOPROXY
-ENV GOPROXY ${GOPROXY:-direct}
+# ENV GOPROXY ${GOPROXY:-direct}
+# ENV GOPROXY=https://proxy.golang.com.cn,direct
 
 ENV GOPATH /go
 ENV GOROOT /usr/local/go
-ENV PACKAGE github.com/answerdev/answer
+ENV PACKAGE github.com/apache/incubator-answer
 ENV BUILD_DIR ${GOPATH}/src/${PACKAGE}
+ENV ANSWER_MODULE ${BUILD_DIR}
 
 ARG TAGS="sqlite sqlite_unlock_notify"
 ENV TAGS "bindata timetzdata $TAGS"
@@ -24,19 +34,22 @@ ARG CGO_EXTRA_CFLAGS
 
 COPY . ${BUILD_DIR}
 WORKDIR ${BUILD_DIR}
-COPY --from=node-builder /tmp/build ${BUILD_DIR}/ui/build
-RUN apk --no-cache add build-base git \
-    && make clean build \
-    && cp answer /usr/bin/answer
+RUN apk --no-cache add build-base git bash nodejs npm && npm install -g pnpm@8.9.2 \
+    && make clean build
+
+RUN chmod 755 answer
+RUN ["/bin/bash","-c","script/build_plugin.sh"]
+RUN cp answer /usr/bin/answer
 
 RUN mkdir -p /data/uploads && chmod 777 /data/uploads \
     && mkdir -p /data/i18n && cp -r i18n/*.yaml /data/i18n
 
-# stage3 copy the binary and resource files into fresh container
 FROM alpine
-LABEL maintainer="maintainers@sf.com"
+LABEL maintainer="linkinstar@apache.org"
 
-ENV TZ "Asia/Shanghai"
+ARG TIMEZONE
+ENV TIMEZONE=${TIMEZONE:-"Asia/Shanghai"}
+
 RUN apk update \
     && apk --no-cache add \
         bash \
@@ -47,7 +60,9 @@ RUN apk update \
         openssh \
         sqlite \
         gnupg \
-    && echo "Asia/Shanghai" > /etc/timezone
+        tzdata \
+    && ln -sf /usr/share/zoneinfo/${TIMEZONE} /etc/localtime \
+    && echo "${TIMEZONE}" > /etc/timezone
 
 COPY --from=golang-builder /usr/bin/answer /usr/bin/answer
 COPY --from=golang-builder /data /data

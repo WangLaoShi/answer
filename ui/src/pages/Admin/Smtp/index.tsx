@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 import React, { FC, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -6,7 +25,7 @@ import { useToast } from '@/hooks';
 import { useSmtpSetting, updateSmtpSetting } from '@/services';
 import pattern from '@/common/pattern';
 import { SchemaForm, JSONSchema, UISchema, initFormData } from '@/components';
-import { handleFormError } from '@/utils';
+import { handleFormError, scrollToElementTop } from '@/utils';
 
 const Smtp: FC = () => {
   const { t } = useTranslation('translation', {
@@ -33,11 +52,11 @@ const Smtp: FC = () => {
         description: t('smtp_host.text'),
       },
       encryption: {
-        type: 'boolean',
+        type: 'string',
         title: t('encryption.label'),
         description: t('encryption.text'),
-        enum: ['SSL', ''],
-        enumNames: ['SSL', 'None'],
+        enum: ['TLS', 'SSL', ''],
+        enumNames: ['TLS', 'SSL', 'None'],
       },
       smtp_port: {
         type: 'string',
@@ -47,7 +66,6 @@ const Smtp: FC = () => {
       smtp_authentication: {
         type: 'boolean',
         title: t('smtp_authentication.title'),
-        label: t('smtp_authentication.label'),
         enum: [true, false],
         enumNames: [t('smtp_authentication.yes'), t('smtp_authentication.no')],
       },
@@ -69,7 +87,7 @@ const Smtp: FC = () => {
   const uiSchema: UISchema = {
     from_email: {
       'ui:options': {
-        type: 'email',
+        inputType: 'email',
       },
     },
     encryption: {
@@ -89,7 +107,7 @@ const Smtp: FC = () => {
     },
     smtp_password: {
       'ui:options': {
-        type: 'password',
+        inputType: 'password',
         validator: (value: string, formData) => {
           if (formData.smtp_authentication.value) {
             if (!value) {
@@ -102,10 +120,13 @@ const Smtp: FC = () => {
     },
     smtp_authentication: {
       'ui:widget': 'switch',
+      'ui:options': {
+        label: t('smtp_authentication.label'),
+      },
     },
     smtp_port: {
       'ui:options': {
-        type: 'number',
+        inputType: 'number',
         validator: (value) => {
           if (!/^[1-9][0-9]*$/.test(value) || Number(value) > 65535) {
             return t('smtp_port.msg');
@@ -116,7 +137,7 @@ const Smtp: FC = () => {
     },
     test_email_recipient: {
       'ui:options': {
-        type: 'email',
+        inputType: 'email',
         validator: (value) => {
           if (value && !pattern.email.test(value)) {
             return t('test_email_recipient.msg');
@@ -161,6 +182,8 @@ const Smtp: FC = () => {
         if (err.isError) {
           const data = handleFormError(err, formData);
           setFormData({ ...data });
+          const ele = document.getElementById(err.list[0].error_field);
+          scrollToElementTop(ele);
         }
       });
   };
@@ -177,7 +200,7 @@ const Smtp: FC = () => {
   }, [setting]);
 
   useEffect(() => {
-    if (formData.smtp_authentication.value === '') {
+    if (!/true|false/.test(formData.smtp_authentication.value)) {
       return;
     }
     if (formData.smtp_authentication.value) {

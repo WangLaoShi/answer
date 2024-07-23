@@ -1,23 +1,46 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package activity
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
-	"github.com/answerdev/answer/internal/base/constant"
-	"github.com/answerdev/answer/internal/entity"
-	"github.com/answerdev/answer/internal/repo/config"
-	"github.com/answerdev/answer/internal/schema"
-	"github.com/answerdev/answer/internal/service/activity_common"
-	"github.com/answerdev/answer/internal/service/comment_common"
-	"github.com/answerdev/answer/internal/service/meta"
-	"github.com/answerdev/answer/internal/service/object_info"
-	"github.com/answerdev/answer/internal/service/revision_common"
-	"github.com/answerdev/answer/internal/service/tag_common"
-	usercommon "github.com/answerdev/answer/internal/service/user_common"
-	"github.com/answerdev/answer/pkg/converter"
-	"github.com/answerdev/answer/pkg/obj"
+	"github.com/apache/incubator-answer/internal/service/activity_common"
+	"github.com/apache/incubator-answer/internal/service/meta_common"
+
+	"github.com/apache/incubator-answer/internal/base/constant"
+	"github.com/apache/incubator-answer/internal/base/handler"
+	"github.com/apache/incubator-answer/internal/entity"
+	"github.com/apache/incubator-answer/internal/schema"
+	"github.com/apache/incubator-answer/internal/service/comment_common"
+	"github.com/apache/incubator-answer/internal/service/config"
+	"github.com/apache/incubator-answer/internal/service/object_info"
+	"github.com/apache/incubator-answer/internal/service/revision_common"
+	"github.com/apache/incubator-answer/internal/service/tag_common"
+	usercommon "github.com/apache/incubator-answer/internal/service/user_common"
+	"github.com/apache/incubator-answer/pkg/converter"
+	"github.com/apache/incubator-answer/pkg/obj"
+	"github.com/apache/incubator-answer/pkg/uid"
 	"github.com/segmentfault/pacman/log"
 )
 
@@ -35,7 +58,8 @@ type ActivityService struct {
 	objectInfoService     *object_info.ObjService
 	commentCommonService  *comment_common.CommentCommonService
 	revisionService       *revision_common.RevisionService
-	metaService           *meta.MetaService
+	metaService           *metacommon.MetaCommonService
+	configService         *config.ConfigService
 }
 
 // NewActivityService new activity service
@@ -47,7 +71,8 @@ func NewActivityService(
 	objectInfoService *object_info.ObjService,
 	commentCommonService *comment_common.CommentCommonService,
 	revisionService *revision_common.RevisionService,
-	metaService *meta.MetaService,
+	metaService *metacommon.MetaCommonService,
+	configService *config.ConfigService,
 ) *ActivityService {
 	return &ActivityService{
 		objectInfoService:     objectInfoService,
@@ -58,6 +83,7 @@ func NewActivityService(
 		commentCommonService:  commentCommonService,
 		revisionService:       revisionService,
 		metaService:           metaService,
+		configService:         configService,
 	}
 }
 
@@ -85,28 +111,44 @@ func (as *ActivityService) GetObjectTimeline(ctx context.Context, req *schema.Ge
 			CreatedAt:  act.CreatedAt.Unix(),
 			Cancelled:  act.Cancelled == entity.ActivityCancelled,
 			ObjectID:   act.ObjectID,
+			UserInfo:   &schema.UserBasicInfo{},
 		}
 		item.ObjectType, _ = obj.GetObjectTypeStrByObjectID(act.ObjectID)
 		if item.Cancelled {
 			item.CancelledAt = act.CancelledAt.Unix()
 		}
 
-		// database save activity type is number, change to activity type string is like "question.asked".
-		// so we need to cut the front part of '.'
-		_, item.ActivityType, _ = strings.Cut(config.ID2KeyMapping[act.ActivityType], ".")
-		// format activity type string to show
-		if isHidden, formattedActivityType := formatActivity(item.ActivityType); isHidden {
-			continue
+		if item.ObjectType == constant.QuestionObjectType || item.ObjectType == constant.AnswerObjectType {
+			if handler.GetEnableShortID(ctx) {
+				item.ObjectID = uid.EnShortID(act.ObjectID)
+			}
+		}
+
+		cfg, err := as.configService.GetConfigByID(ctx, act.ActivityType)
+		if err != nil {
+			log.Errorf("fail to get config by id: %d, err: %v, act id is: %s", act.ActivityType, err, act.ID)
 		} else {
-			item.ActivityType = formattedActivityType
+			// database save activity type is number, change to activity type string is like "question.asked".
+			// so we need to cut the front part of '.', only need string like 'asked'
+			_, item.ActivityType, _ = strings.Cut(cfg.Key, ".")
+			// format activity type string to show
+			if isHidden, formattedActivityType := formatActivity(item.ActivityType); isHidden {
+				continue
+			} else {
+				item.ActivityType = formattedActivityType
+			}
 		}
 
 		// if activity is down vote, only admin can see who does it.
 		if item.ActivityType == constant.ActDownVote && !req.IsAdmin {
-			item.Username = "N/A"
-			item.UserDisplayName = "N/A"
+			item.UserInfo.Username = "N/A"
+			item.UserInfo.DisplayName = "N/A"
 		} else {
-			item.UserID = act.UserID
+			if act.TriggerUserID > 0 {
+				item.UserInfo.ID = fmt.Sprintf("%d", act.TriggerUserID)
+			} else {
+				item.UserInfo.ID = act.UserID
+			}
 		}
 
 		item.Comment = as.getTimelineActivityComment(ctx, item.ObjectID, item.ObjectType, item.ActivityType, item.RevisionID)
@@ -165,7 +207,7 @@ func (as *ActivityService) getTimelineActivityComment(ctx context.Context, objec
 		if err != nil {
 			log.Error(err)
 		} else {
-			return revision.Log
+			return converter.Markdown2HTML(revision.Log)
 		}
 		return
 	}
@@ -177,7 +219,7 @@ func (as *ActivityService) getTimelineActivityComment(ctx context.Context, objec
 		} else {
 			closeMsg := &schema.CloseQuestionMeta{}
 			if err := json.Unmarshal([]byte(metaInfo.Value), closeMsg); err == nil {
-				return closeMsg.CloseMsg
+				return converter.Markdown2HTML(closeMsg.CloseMsg)
 			}
 		}
 	}
@@ -188,10 +230,10 @@ func (as *ActivityService) formatTimelineUserInfo(ctx context.Context, timeline 
 	userExist := make(map[string]bool)
 	userIDs := make([]string, 0)
 	for _, info := range timeline {
-		if len(info.UserID) == 0 || userExist[info.UserID] {
+		if len(info.UserInfo.ID) == 0 || userExist[info.UserInfo.ID] {
 			continue
 		}
-		userIDs = append(userIDs, info.UserID)
+		userIDs = append(userIDs, info.UserInfo.ID)
 	}
 	if len(userIDs) == 0 {
 		return
@@ -202,13 +244,10 @@ func (as *ActivityService) formatTimelineUserInfo(ctx context.Context, timeline 
 		return
 	}
 	for _, info := range timeline {
-		if len(info.UserID) == 0 {
+		if len(info.UserInfo.ID) == 0 {
 			continue
 		}
-		if userInfo, ok := userInfoMapping[info.UserID]; ok {
-			info.Username = userInfo.Username
-			info.UserDisplayName = userInfo.DisplayName
-		}
+		info.UserInfo = userInfoMapping[info.UserInfo.ID]
 	}
 }
 
@@ -221,7 +260,7 @@ func (as *ActivityService) GetObjectTimelineDetail(ctx context.Context, req *sch
 	return resp, nil
 }
 
-// GetObjectTimelineDetail get object detail
+// getOneObjectDetail get object detail
 func (as *ActivityService) getOneObjectDetail(ctx context.Context, revisionID string) (
 	resp *schema.ObjectTimelineDetail, err error) {
 	resp = &schema.ObjectTimelineDetail{Tags: make([]*schema.ObjectTimelineTag, 0)}

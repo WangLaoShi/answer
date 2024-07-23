@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 import { FC, useState } from 'react';
 import { Button, Row, Col } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
@@ -51,7 +70,7 @@ const Index: FC<Props> = ({ data, isAdmin, objectInfo, revisionList }) => {
           <br />
           {data.cancelled_at > 0 && <FormatTime time={data.cancelled_at} />}
         </td>
-        <td>
+        <td className="text-nowrap">
           {(data.activity_type === 'rollback' ||
             data.activity_type === 'edited' ||
             data.activity_type === 'asked' ||
@@ -109,10 +128,7 @@ const Index: FC<Props> = ({ data, isAdmin, objectInfo, revisionList }) => {
           ) : (
             <BaseUserCard
               className="fs-normal"
-              data={{
-                username: data.username,
-                display_name: data.user_display_name,
-              }}
+              data={data?.user_info}
               showAvatar={false}
               showReputation={false}
             />
@@ -123,7 +139,6 @@ const Index: FC<Props> = ({ data, isAdmin, objectInfo, revisionList }) => {
         </td>
       </tr>
       <tr className={isOpen ? '' : 'd-none'}>
-        {/* <td /> */}
         <td colSpan={5} className="p-0 py-5">
           <Row className="justify-content-center">
             <Col xxl={8}>

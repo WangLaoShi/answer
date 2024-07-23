@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 import { getLoggedUserInfo, getAppSettings } from '@/services';
 import {
   loggedUserInfoStore,
@@ -9,13 +28,19 @@ import {
   themeSettingStore,
   seoSettingStore,
   loginToContinueStore,
+  pageTagStore,
+  writeSettingStore,
 } from '@/stores';
 import { RouteAlias } from '@/router/alias';
+import {
+  LOGGED_TOKEN_STORAGE_KEY,
+  REDIRECT_PATH_STORAGE_KEY,
+} from '@/common/constants';
 import Storage from '@/utils/storage';
-import { LOGGED_USER_STORAGE_KEY } from '@/common/constants';
-import { setupAppLanguage, setupAppTimeZone } from '@/utils/localize';
 
-import { floppyNavigation } from './floppyNavigation';
+import { setupAppLanguage, setupAppTimeZone, setupAppTheme } from './localize';
+import { floppyNavigation, NavigateConfig } from './floppyNavigation';
+import { pullUcAgent, getSignUpUrl } from './userCenter';
 
 type TLoginState = {
   isLogged: boolean;
@@ -24,13 +49,22 @@ type TLoginState = {
   isForbidden: boolean;
   isNormal: boolean;
   isAdmin: boolean;
+  isModerator: boolean;
 };
 
 export type TGuardResult = {
   ok: boolean;
   redirect?: string;
+  error?: {
+    code?: number | string;
+    msg?: string;
+  };
 };
-export type TGuardFunc = () => TGuardResult;
+export type TGuardFunc = (args: {
+  loaderData?: any;
+  path?: string;
+  page?: string;
+}) => TGuardResult;
 
 export const deriveLoginState = (): TLoginState => {
   const ls: TLoginState = {
@@ -40,6 +74,7 @@ export const deriveLoginState = (): TLoginState => {
     isForbidden: false,
     isNormal: false,
     isAdmin: false,
+    isModerator: false,
   };
   const { user } = loggedUserInfoStore.getState();
   if (user.access_token) {
@@ -51,55 +86,69 @@ export const deriveLoginState = (): TLoginState => {
   if (ls.isLogged && user.mail_status === 2) {
     ls.isNotActivated = true;
   }
-  if (ls.isLogged && user.status === 'forbidden') {
+  if (ls.isLogged && user.status === 'suspended') {
     ls.isForbidden = true;
   }
   if (ls.isActivated && !ls.isForbidden) {
     ls.isNormal = true;
   }
-  if (ls.isNormal && user.is_admin === true) {
+  if (ls.isNormal && user.role_id === 2) {
     ls.isAdmin = true;
+  }
+  if (ls.isNormal && user.role_id === 3) {
+    ls.isModerator = true;
   }
   return ls;
 };
 
-const isIgnoredPath = (ignoredPath: string | string[]) => {
+export const IGNORE_PATH_LIST = [
+  RouteAlias.login,
+  RouteAlias.signUp,
+  RouteAlias.accountRecovery,
+  RouteAlias.changeEmail,
+  RouteAlias.passwordReset,
+  RouteAlias.accountActivation,
+  RouteAlias.confirmNewEmail,
+  RouteAlias.confirmEmail,
+  RouteAlias.authLanding,
+  '/user-center/',
+];
+
+export const isIgnoredPath = (ignoredPath?: string | string[]) => {
+  if (!ignoredPath) {
+    ignoredPath = IGNORE_PATH_LIST;
+  }
   if (!Array.isArray(ignoredPath)) {
     ignoredPath = [ignoredPath];
   }
-  const { pathname } = window.location;
-  const matchingPath = ignoredPath.find((_) => {
-    return pathname.indexOf(_) !== -1;
+  const matchingPath = ignoredPath.find((p) => {
+    return floppyNavigation.matchToCurrentHref(p);
   });
   return !!matchingPath;
 };
 
-let pullLock = false;
-let dedupeTimestamp = 0;
-export const pullLoggedUser = async (forceRePull = false) => {
-  // only pull once if not force re-pull
-  if (pullLock && !forceRePull) {
+let pluTimestamp = 0;
+export const pullLoggedUser = async (isInitPull = false) => {
+  /**
+   * WARN:
+   * - dedupe pull requests in this time span in 10 seconds
+   * - isInitPull:
+   *   Requests sent by the initialisation method cannot be throttled
+   *   and may cause Promise.allSettled to complete early in React development mode,
+   *   resulting in inaccurate application data.
+   */
+  //
+  if (!isInitPull && Date.now() - pluTimestamp < 1000 * 10) {
     return;
   }
-  // dedupe pull requests in this time span in 10 seconds
-  if (Date.now() - dedupeTimestamp < 1000 * 10) {
-    return;
-  }
-
-  dedupeTimestamp = Date.now();
-  const loggedUserInfo = await getLoggedUserInfo().catch((ex) => {
-    dedupeTimestamp = 0;
-    if (!deriveLoginState().isLogged) {
-      // load fallback userInfo from local storage
-      const storageLoggedUserInfo = Storage.get(LOGGED_USER_STORAGE_KEY);
-      if (storageLoggedUserInfo) {
-        loggedUserInfoStore.getState().update(storageLoggedUserInfo);
-      }
-    }
-    console.error(ex);
+  pluTimestamp = Date.now();
+  const loggedUserInfo = await getLoggedUserInfo({
+    passingError: true,
+  }).catch(() => {
+    pluTimestamp = 0;
+    loggedUserInfoStore.getState().clear(false);
   });
   if (loggedUserInfo) {
-    pullLock = true;
     loggedUserInfoStore.getState().update(loggedUserInfo);
   }
 };
@@ -110,6 +159,16 @@ export const logged = () => {
   if (!us.isLogged) {
     gr.ok = false;
     gr.redirect = RouteAlias.login;
+  }
+  return gr;
+};
+
+export const loggedRedirectHome = () => {
+  const gr: TGuardResult = { ok: true };
+  const us = deriveLoginState();
+  if (!us.isLogged) {
+    gr.ok = false;
+    gr.redirect = RouteAlias.home;
   }
   return gr;
 };
@@ -139,7 +198,7 @@ export const activated = () => {
   const us = deriveLoginState();
   if (us.isNotActivated) {
     gr.ok = false;
-    gr.redirect = RouteAlias.activation;
+    gr.redirect = RouteAlias.inactive;
   }
   return gr;
 };
@@ -169,7 +228,38 @@ export const admin = () => {
   const us = deriveLoginState();
   if (gr.ok && !us.isAdmin) {
     gr.ok = false;
-    gr.redirect = RouteAlias.home;
+    gr.error = {
+      code: '403',
+      msg: '',
+    };
+    gr.redirect = '';
+  }
+  return gr;
+};
+
+export const isAdminOrModerator = () => {
+  const gr = logged();
+  const us = deriveLoginState();
+  if (gr.ok && !us.isAdmin && !us.isModerator) {
+    gr.ok = false;
+    gr.error = {
+      code: '403',
+      msg: '',
+    };
+    gr.redirect = '';
+  }
+  return gr;
+};
+
+export const isEditable = (args) => {
+  const loaderData = args?.loaderData || {};
+  const gr: TGuardResult = { ok: true };
+  if (loaderData.code === 400) {
+    gr.ok = false;
+    gr.error = {
+      code: '403',
+      msg: loaderData.msg,
+    };
   }
   return gr;
 };
@@ -184,6 +274,16 @@ export const allowNewRegistration = () => {
   return gr;
 };
 
+export const singUpAgent = () => {
+  const gr: TGuardResult = { ok: true };
+  const signUpUrl = getSignUpUrl();
+  if (signUpUrl !== RouteAlias.signUp) {
+    gr.ok = false;
+    gr.redirect = signUpUrl;
+  }
+  return gr;
+};
+
 export const shouldLoginRequired = () => {
   const gr: TGuardResult = { ok: true };
   const loginSetting = loginSettingStore.getState().login;
@@ -194,19 +294,7 @@ export const shouldLoginRequired = () => {
   if (us.isLogged) {
     return gr;
   }
-  if (
-    isIgnoredPath([
-      RouteAlias.login,
-      RouteAlias.register,
-      '/users/account-recovery',
-      'users/change-email',
-      'users/password-reset',
-      'users/account-activation',
-      'users/account-activation/success',
-      '/users/account-activation/failed',
-      '/users/confirm-new-email',
-    ])
-  ) {
+  if (isIgnoredPath(IGNORE_PATH_LIST)) {
     return gr;
   }
   gr.ok = false;
@@ -232,12 +320,10 @@ export const tryNormalLogged = (canNavigate: boolean = false) => {
     return false;
   }
   if (us.isNotActivated) {
-    floppyNavigation.navigate(RouteAlias.activation, () => {
-      window.location.href = RouteAlias.activation;
-    });
+    floppyNavigation.navigate(RouteAlias.inactive);
   } else if (us.isForbidden) {
-    floppyNavigation.navigate(RouteAlias.suspended, () => {
-      window.location.replace(RouteAlias.suspended);
+    floppyNavigation.navigate(RouteAlias.suspended, {
+      handler: 'replace',
     });
   }
 
@@ -254,38 +340,122 @@ export const tryLoggedAndActivated = () => {
   return gr;
 };
 
+/**
+ * Auto handling of page redirect logic after a successful login
+ */
+export const handleLoginRedirect = (handler?: NavigateConfig['handler']) => {
+  const redirectUrl = Storage.get(REDIRECT_PATH_STORAGE_KEY) || RouteAlias.home;
+  Storage.remove(REDIRECT_PATH_STORAGE_KEY);
+  floppyNavigation.navigate(redirectUrl, {
+    handler,
+    options: { replace: true },
+  });
+};
+
+/**
+ * Unified processing of login logic after getting `access_token`
+ */
+export const handleLoginWithToken = (
+  token: string | null,
+  handler?: NavigateConfig['handler'],
+) => {
+  if (token) {
+    Storage.set(LOGGED_TOKEN_STORAGE_KEY, token);
+    setTimeout(() => {
+      getLoggedUserInfo().then((res) => {
+        loggedUserInfoStore.getState().update(res);
+        const userStat = deriveLoginState();
+        if (userStat.isNotActivated) {
+          floppyNavigation.navigate(RouteAlias.inactive, {
+            handler,
+            options: {
+              replace: true,
+            },
+          });
+        } else {
+          handleLoginRedirect(handler);
+        }
+      });
+    });
+  } else {
+    floppyNavigation.navigate(RouteAlias.home, {
+      handler,
+      options: {
+        replace: true,
+      },
+    });
+  }
+};
+
+/**
+ * Initialize app configuration
+ */
 export const initAppSettingsStore = async () => {
   const appSettings = await getAppSettings();
   if (appSettings) {
     siteInfoStore.getState().update(appSettings.general);
-    siteInfoStore.getState().updateVersion(appSettings.version);
+    siteInfoStore
+      .getState()
+      .updateVersion(appSettings.version, appSettings.revision);
+    siteInfoStore.getState().updateUsers(appSettings.site_users);
     interfaceStore.getState().update(appSettings.interface);
+    pageTagStore.getState().update({
+      title: appSettings.general?.name,
+      description: appSettings.general?.description,
+    });
     brandingStore.getState().update(appSettings.branding);
     loginSettingStore.getState().update(appSettings.login);
     customizeStore.getState().update(appSettings.custom_css_html);
     themeSettingStore.getState().update(appSettings.theme);
     seoSettingStore.getState().update(appSettings.site_seo);
+    writeSettingStore
+      .getState()
+      .update({ restrict_answer: appSettings.site_write.restrict_answer });
   }
 };
 
-export const shouldInitAppFetchData = () => {
-  if (isIgnoredPath('/install') && window.location.pathname === '/install') {
-    return false;
+export const googleSnapshotRedirect = () => {
+  const gr: TGuardResult = { ok: true };
+  const searchStr = new URLSearchParams(window.location.search)?.get('q') || '';
+  if (window.location.host !== 'webcache.googleusercontent.com') {
+    return gr;
+  }
+  if (searchStr.indexOf('cache:') === 0 && searchStr.includes(':http')) {
+    const redirectUrl = `http${searchStr.split(':http')[1]}`;
+    const pathname = redirectUrl.replace(new URL(redirectUrl).origin, '');
+
+    gr.ok = false;
+    gr.redirect = pathname || '/';
+    return gr;
   }
 
-  return true;
+  return gr;
 };
 
+let appInitialized = false;
 export const setupApp = async () => {
+  /**
+   * This cannot be removed:
+   * clicking on the current navigation link will trigger a call to the routing loader,
+   * even though the page is not refreshed.
+   */
+  if (appInitialized) {
+    return;
+  }
   /**
    * WARN:
    * 1. must pre init logged user info for router guard
    * 2. must pre init app settings for app render
    */
-  // TODO: optimize `initAppSettingsStore` by server render
-  if (shouldInitAppFetchData()) {
-    await Promise.allSettled([pullLoggedUser(), initAppSettingsStore()]);
-    await setupAppLanguage();
-    setupAppTimeZone();
-  }
+  await Promise.allSettled([initAppSettingsStore(), pullLoggedUser(true)]);
+  await Promise.allSettled([pullUcAgent()]);
+  setupAppLanguage();
+  setupAppTimeZone();
+  setupAppTheme();
+  /**
+   * WARN:
+   * Initialization must be completed after all initialization actions,
+   * otherwise the problem of rendering twice in React development mode can lead to inaccurate data or flickering pages
+   */
+  appInitialized = true;
 };

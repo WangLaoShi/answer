@@ -1,7 +1,27 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package converter
 
 import (
 	"bytes"
+	"regexp"
 
 	"github.com/asaskevich/govalidator"
 	"github.com/microcosm-cc/bluemonday"
@@ -32,7 +52,27 @@ func Markdown2HTML(source string) string {
 		log.Error(err)
 		return source
 	}
-	return buf.String()
+	html := buf.String()
+	filter := bluemonday.UGCPolicy()
+	filter.AllowStyling()
+	filter.RequireNoFollowOnLinks(false)
+	filter.RequireParseableURLs(false)
+	filter.RequireNoFollowOnFullyQualifiedLinks(false)
+	filter.AllowElements("kbd")
+	filter.AllowAttrs("title").Matching(regexp.MustCompile(`^[\p{L}\p{N}\s\-_',\[\]!\./\\\(\)]*$|^@embed?$`)).Globally()
+	html = filter.Sanitize(html)
+	return html
+}
+
+// Markdown2BasicHTML convert markdown to html ,Only basic syntax can be used
+func Markdown2BasicHTML(source string) string {
+	content := Markdown2HTML(source)
+	filter := bluemonday.NewPolicy()
+	filter.AllowElements("p", "b", "br", "strong", "em")
+	filter.AllowAttrs("src").OnElements("img")
+	filter.AddSpaceWhenStrippingTag(true)
+	content = filter.Sanitize(content)
+	return content
 }
 
 type DangerousHTMLFilterExtension struct {
@@ -69,7 +109,11 @@ func (r *DangerousHTMLRenderer) renderRawHTML(w util.BufWriter, source []byte, n
 	l := n.Segments.Len()
 	for i := 0; i < l; i++ {
 		segment := n.Segments.At(i)
-		_, _ = w.Write(r.Filter.SanitizeBytes(segment.Value(source)))
+		if string(source[segment.Start:segment.Stop]) == "<kbd>" || string(source[segment.Start:segment.Stop]) == "</kbd>" {
+			_, _ = w.Write(segment.Value(source))
+		} else {
+			_, _ = w.Write(r.Filter.SanitizeBytes(segment.Value(source)))
+		}
 	}
 	return ast.WalkSkipChildren, nil
 }
@@ -96,6 +140,7 @@ func (r *DangerousHTMLRenderer) renderLink(w util.BufWriter, source []byte, node
 	n := node.(*ast.Link)
 	if entering && r.renderLinkIsUrl(string(n.Destination)) {
 		_, _ = w.WriteString("<a href=\"")
+		// _, _ = w.WriteString("<a test=\"1\" rel=\"nofollow\" href=\"")
 		if r.Unsafe || !html.IsDangerousURL(n.Destination) {
 			_, _ = w.Write(util.EscapeHTML(util.URLEscape(n.Destination, true)))
 		}

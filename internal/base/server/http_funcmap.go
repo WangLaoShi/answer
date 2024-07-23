@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package server
 
 import (
@@ -8,11 +27,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/answerdev/answer/internal/base/translator"
-	"github.com/answerdev/answer/internal/schema"
-	"github.com/answerdev/answer/pkg/converter"
-	"github.com/answerdev/answer/pkg/day"
-	"github.com/answerdev/answer/pkg/htmltext"
+	"github.com/apache/incubator-answer/internal/base/translator"
+	"github.com/apache/incubator-answer/internal/controller"
+	"github.com/apache/incubator-answer/internal/schema"
+	"github.com/apache/incubator-answer/pkg/converter"
+	"github.com/apache/incubator-answer/pkg/day"
+	"github.com/apache/incubator-answer/pkg/htmltext"
 	"github.com/segmentfault/pacman/i18n"
 )
 
@@ -40,6 +60,9 @@ var funcMap = template.FuncMap{
 	},
 	"templateHTML": func(data string) template.HTML {
 		return template.HTML(data)
+	},
+	"formatLinkNofollow": func(data string) template.HTML {
+		return template.HTML(FormatLinkNofollow(data))
 	},
 	"translator": func(la i18n.Language, data string, params ...interface{}) string {
 		trans := translator.GlobalTrans.Tr(la, data)
@@ -115,4 +138,20 @@ var funcMap = template.FuncMap{
 	"urlTitle": func(title string) string {
 		return htmltext.UrlTitle(title)
 	},
+}
+
+func FormatLinkNofollow(html string) string {
+	var hrefRegexp = regexp.MustCompile("(?m)<a.*?[^<]>.*?</a>")
+	match := hrefRegexp.FindAllString(html, -1)
+	for _, v := range match {
+		hasNofollow := strings.Contains(v, "rel=\"nofollow\"")
+		hasSiteUrl := strings.Contains(v, controller.SiteUrl)
+		if !hasSiteUrl {
+			if !hasNofollow {
+				nofollowUrl := strings.Replace(v, "<a", "<a rel=\"nofollow\"", 1)
+				html = strings.Replace(html, v, nofollowUrl, 1)
+			}
+		}
+	}
+	return html
 }

@@ -1,9 +1,28 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 import { FC } from 'react';
 import { Pagination } from 'react-bootstrap';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 
-import { scrollToDocTop } from '@/utils';
+import { scrollToDocTop, floppyNavigation } from '@/utils';
 
 interface Props {
   currentPage: number;
@@ -48,10 +67,12 @@ const PageItem = ({ page, currentPage, path }: PageItemProps) => {
       active={currentPage === page}
       href={path}
       onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        navigate(path);
-        scrollToDocTop();
+        if (floppyNavigation.shouldProcessLinkClick(e)) {
+          e.preventDefault();
+          e.stopPropagation();
+          navigate(path);
+          scrollToDocTop();
+        }
       }}>
       {page}
     </Pagination.Item>
@@ -91,9 +112,11 @@ const Index: FC<Props> = ({
         <Pagination.Prev
           href={handleParams(currentPage - 1)}
           onClick={(e) => {
-            e.preventDefault();
-            navigate(handleParams(currentPage - 1));
-            scrollToDocTop();
+            if (floppyNavigation.shouldProcessLinkClick(e)) {
+              e.preventDefault();
+              navigate(handleParams(currentPage - 1));
+              scrollToDocTop();
+            }
           }}>
           {t('prev')}
         </Pagination.Prev>
@@ -130,7 +153,7 @@ const Index: FC<Props> = ({
             path={handleParams(1)}
           />
 
-          <Pagination.Ellipsis disabled />
+          <Pagination.Ellipsis className="pe-none" />
         </>
       )}
       {currentPage >= 5 && (
@@ -178,7 +201,7 @@ const Index: FC<Props> = ({
             );
           })}
       {totalPage > 5 && realPage + 2 < totalPage && (
-        <Pagination.Ellipsis disabled />
+        <Pagination.Ellipsis className="pe-none" />
       )}
 
       {totalPage > 0 && currentPage < totalPage && (
@@ -186,9 +209,11 @@ const Index: FC<Props> = ({
           disabled={currentPage === totalPage}
           href={handleParams(currentPage + 1)}
           onClick={(e) => {
-            e.preventDefault();
-            navigate(handleParams(currentPage + 1));
-            scrollToDocTop();
+            if (floppyNavigation.shouldProcessLinkClick(e)) {
+              e.preventDefault();
+              navigate(handleParams(currentPage + 1));
+              scrollToDocTop();
+            }
           }}>
           {t('next')}
         </Pagination.Next>

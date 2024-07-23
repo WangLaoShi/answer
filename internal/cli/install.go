@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package cli
 
 import (
@@ -5,10 +24,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/answerdev/answer/configs"
-	"github.com/answerdev/answer/i18n"
-	"github.com/answerdev/answer/pkg/dir"
-	"github.com/answerdev/answer/pkg/writer"
+	"github.com/apache/incubator-answer/configs"
+	"github.com/apache/incubator-answer/i18n"
+	"github.com/apache/incubator-answer/pkg/dir"
+	"github.com/apache/incubator-answer/pkg/writer"
 )
 
 const (
@@ -40,7 +59,7 @@ func FormatAllPath(dataDirPath string) {
 func InstallAllInitialEnvironment(dataDirPath string) {
 	FormatAllPath(dataDirPath)
 	installUploadDir()
-	installI18nBundle()
+	InstallI18nBundle(false)
 	fmt.Println("install all initial environment done")
 }
 
@@ -79,8 +98,12 @@ func installUploadDir() {
 	}
 }
 
-func installI18nBundle() {
+func InstallI18nBundle(replace bool) {
 	fmt.Println("[i18n] try to install i18n bundle...")
+	// if SKIP_REPLACE_I18N is set, skip replace i18n bundles
+	if len(os.Getenv("SKIP_REPLACE_I18N")) > 0 {
+		replace = false
+	}
 	if err := dir.CreateDirIfNotExist(I18nPath); err != nil {
 		fmt.Println(err.Error())
 		return
@@ -98,7 +121,11 @@ func installI18nBundle() {
 		if err != nil {
 			continue
 		}
-		if dir.CheckFileExist(path) {
+		exist := dir.CheckFileExist(path)
+		if exist && !replace {
+			continue
+		}
+		if exist {
 			fmt.Printf("[i18n] install %s file exist, try to replace it\n", item.Name())
 			if err = os.Remove(path); err != nil {
 				fmt.Println(err)

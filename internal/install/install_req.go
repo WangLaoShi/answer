@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package install
 
 import (
@@ -5,9 +24,9 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/answerdev/answer/internal/base/reason"
-	"github.com/answerdev/answer/internal/base/validator"
-	"github.com/answerdev/answer/pkg/checker"
+	"github.com/apache/incubator-answer/internal/base/reason"
+	"github.com/apache/incubator-answer/internal/base/validator"
+	"github.com/apache/incubator-answer/pkg/checker"
 	"github.com/segmentfault/pacman/errors"
 	"xorm.io/xorm/schemas"
 )
@@ -78,12 +97,13 @@ type InitEnvironmentResp struct {
 // InitBaseInfoReq init base info request
 type InitBaseInfoReq struct {
 	Language      string `validate:"required,gt=0,lte=30" json:"lang"`
-	SiteName      string `validate:"required,gt=0,lte=30" json:"site_name"`
+	SiteName      string `validate:"required,sanitizer,gt=0,lte=30" json:"site_name"`
 	SiteURL       string `validate:"required,gt=0,lte=512,url" json:"site_url"`
 	ContactEmail  string `validate:"required,email,gt=0,lte=500" json:"contact_email"`
 	AdminName     string `validate:"required,gt=3,lte=30" json:"name"`
 	AdminPassword string `validate:"required,gte=8,lte=32" json:"password"`
 	AdminEmail    string `validate:"required,email,gt=0,lte=500" json:"email"`
+	LoginRequired bool   `json:"login_required"`
 }
 
 func (r *InitBaseInfoReq) Check() (errFields []*validator.FormErrorField, err error) {
@@ -104,4 +124,8 @@ func (r *InitBaseInfoReq) FormatSiteUrl() {
 		return
 	}
 	r.SiteURL = fmt.Sprintf("%s://%s", parsedUrl.Scheme, parsedUrl.Host)
+	if len(parsedUrl.Path) > 0 {
+		r.SiteURL = r.SiteURL + parsedUrl.Path
+		r.SiteURL = strings.TrimSuffix(r.SiteURL, "/")
+	}
 }

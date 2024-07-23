@@ -1,15 +1,35 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Container, Row, Col, Form, Button, Card } from 'react-bootstrap';
-import { useParams, useNavigate } from 'react-router-dom';
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
+import { Row, Col, Form, Button, Card } from 'react-bootstrap';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
 import dayjs from 'dayjs';
 import classNames from 'classnames';
 
-import { handleFormError } from '@/utils';
+import { handleFormError, scrollToDocTop } from '@/utils';
 import { usePageTags, usePromptWithUnload } from '@/hooks';
+import { useCaptchaPlugin, useRenderHtmlPlugin } from '@/utils/pluginKit';
 import { pathFactory } from '@/router/pathFactory';
-import { Editor, EditorRef, Icon } from '@/components';
+import { Editor, EditorRef, Icon, htmlRender } from '@/components';
 import type * as Type from '@/common/interface';
 import {
   useQueryAnswerInfo,
@@ -23,31 +43,48 @@ interface FormDataItem {
   content: Type.FormValue<string>;
   description: Type.FormValue<string>;
 }
-const initFormData = {
-  content: {
-    value: '',
-    isInvalid: false,
-    errorMsg: '',
-  },
-  description: {
-    value: '',
-    isInvalid: false,
-    errorMsg: '',
-  },
-};
+
 const Index = () => {
   const { aid = '', qid = '' } = useParams();
   const [focusType, setForceType] = useState('');
+  useLayoutEffect(() => {
+    scrollToDocTop();
+  }, []);
 
   const { t } = useTranslation('translation', { keyPrefix: 'edit_answer' });
   const navigate = useNavigate();
+
+  const initFormData = {
+    content: {
+      value: '',
+      isInvalid: false,
+      errorMsg: '',
+    },
+    description: {
+      value: '',
+      isInvalid: false,
+      errorMsg: '',
+    },
+  };
 
   const { data } = useQueryAnswerInfo(aid);
   const [formData, setFormData] = useState<FormDataItem>(initFormData);
   const [immData, setImmData] = useState(initFormData);
   const [contentChanged, setContentChanged] = useState(false);
+  const editCaptcha = useCaptchaPlugin('edit');
 
-  initFormData.content.value = data?.info.content || '';
+  useEffect(() => {
+    if (data?.info?.content) {
+      setFormData({
+        ...formData,
+        content: {
+          value: data.info.content,
+          isInvalid: false,
+          errorMsg: '',
+        },
+      });
+    }
+  }, [data?.info?.content]);
 
   const { data: revisions = [] } = useQueryRevisions(aid);
 
@@ -56,6 +93,14 @@ const Index = () => {
   });
 
   const questionContentRef = useRef<HTMLDivElement>(null);
+  useRenderHtmlPlugin(questionContentRef.current);
+
+  useEffect(() => {
+    if (!questionContentRef?.current) {
+      return;
+    }
+    htmlRender(questionContentRef.current);
+  }, [questionContentRef]);
 
   usePromptWithUnload({
     when: contentChanged,
@@ -108,15 +153,7 @@ const Index = () => {
     return bol;
   };
 
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-    setContentChanged(false);
-
-    event.preventDefault();
-    event.stopPropagation();
-    if (!checkValidated()) {
-      return;
-    }
-
+  const submitEditAnswer = () => {
     const params: Type.AnswerParams = {
       content: formData.content.value,
       html: editorRef.current.getHtml(),
@@ -124,8 +161,11 @@ const Index = () => {
       id: aid,
       edit_summary: formData.description.value,
     };
+    editCaptcha?.resolveCaptchaReq(params);
+
     modifyAnswer(params)
-      .then((res) => {
+      .then(async (res) => {
+        await editCaptcha?.close();
         navigate(
           pathFactory.answerLanding({
             questionId: qid,
@@ -139,17 +179,37 @@ const Index = () => {
       })
       .catch((ex) => {
         if (ex.isError) {
+          editCaptcha?.handleCaptchaError(ex.list);
           const stateData = handleFormError(ex, formData);
           setFormData({ ...stateData });
         }
       });
   };
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    setContentChanged(false);
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (!checkValidated()) {
+      return;
+    }
+
+    if (!editCaptcha) {
+      submitEditAnswer();
+      return;
+    }
+    editCaptcha.check(() => submitEditAnswer());
+  };
   const handleSelectedRevision = (e) => {
     const index = e.target.value;
     const revision = revisions[index];
-    formData.content.value = revision.content.content;
-    setImmData({ ...formData });
-    setFormData({ ...formData });
+    if (revision?.content) {
+      formData.content.value = revision.content.content;
+      setImmData({ ...formData });
+      setFormData({ ...formData });
+    }
   };
 
   const backPage = () => {
@@ -159,20 +219,16 @@ const Index = () => {
     title: t('edit_answer', { keyPrefix: 'page_title' }),
   });
   return (
-    <Container className="pt-4 mt-2 mb-5 edit-answer-wrap">
-      <Row className="justify-content-center">
-        <Col xxl={10} md={12}>
-          <h3 className="mb-4">{t('title')}</h3>
-        </Col>
-      </Row>
-      <Row className="justify-content-center">
-        <Col xxl={7} lg={8} sm={12} className="mb-4 mb-md-0">
-          <a
-            href={pathFactory.questionLanding(qid, data?.question.url_title)}
+    <div className="pt-4 mb-5 edit-answer-wrap">
+      <h3 className="mb-4">{t('title')}</h3>
+      <Row>
+        <Col className="page-main flex-auto">
+          <Link
+            to={pathFactory.questionLanding(qid, data?.question.url_title)}
             target="_blank"
             rel="noreferrer">
             <h5 className="mb-3">{data?.question.title}</h5>
-          </a>
+          </Link>
 
           <div className="question-content-wrap">
             <div
@@ -185,14 +241,14 @@ const Index = () => {
               style={{ maxHeight: questionContentRef?.current?.scrollHeight }}
             />
             <div className="line bg-light  d-flex justify-content-center align-items-center">
-              <Icon name="three-dots" />
+              <Icon type="bi" name="grip-horizontal" className="mt-1" />
             </div>
           </div>
 
           <Form noValidate onSubmit={handleSubmit}>
             <Form.Group controlId="revision" className="mb-3">
               <Form.Label>{t('form.fields.revision.label')}</Form.Label>
-              <Form.Select onChange={handleSelectedRevision}>
+              <Form.Select onChange={handleSelectedRevision} defaultValue={0}>
                 {revisions.map(({ create_at, reason, user_info }, index) => {
                   const date = dayjs(create_at * 1000)
                     .tz()
@@ -200,7 +256,10 @@ const Index = () => {
                   return (
                     <option key={`${create_at}`} value={index}>
                       {`${date} - ${user_info.display_name} - ${
-                        reason || t('default_reason')
+                        reason ||
+                        (index === revisions.length - 1
+                          ? t('default_first_reason')
+                          : t('default_reason'))
                       }`}
                     </option>
                   );
@@ -244,6 +303,7 @@ const Index = () => {
                 defaultValue={formData.description.value}
                 isInvalid={formData.description.isInvalid}
                 placeholder={t('form.fields.edit_summary.placeholder')}
+                contentEditable
               />
               <Form.Control.Feedback type="invalid">
                 {formData.description.errorMsg}
@@ -260,7 +320,7 @@ const Index = () => {
             </div>
           </Form>
         </Col>
-        <Col xxl={3} lg={4} sm={12} className="mt-5 mt-lg-0">
+        <Col className="page-right-side mt-4 mt-xl-0">
           <Card>
             <Card.Header>
               {t('title', { keyPrefix: 'how_to_format' })}
@@ -274,7 +334,7 @@ const Index = () => {
           </Card>
         </Col>
       </Row>
-    </Container>
+    </div>
   );
 };
 

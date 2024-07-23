@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 import { FC, useState, useEffect } from 'react';
 import { Container, Row, Col, Card, Alert } from 'react-bootstrap';
 import { useTranslation, Trans } from 'react-i18next';
@@ -10,8 +29,14 @@ import {
   installBaseInfo,
   checkConfigFileExists,
 } from '@/services';
-import { Storage, handleFormError } from '@/utils';
+import {
+  Storage,
+  handleFormError,
+  scrollToDocTop,
+  scrollToElementTop,
+} from '@/utils';
 import { CURRENT_LANG_STORAGE_KEY } from '@/common/constants';
+import { BASE_ORIGIN } from '@/router/alias';
 
 import {
   FirstStep,
@@ -75,12 +100,17 @@ const Index: FC = () => {
       errorMsg: '',
     },
     site_url: {
-      value: window.location.origin,
+      value: BASE_ORIGIN,
       isInvalid: false,
       errorMsg: '',
     },
     contact_email: {
       value: '',
+      isInvalid: false,
+      errorMsg: '',
+    },
+    login_required: {
+      value: false,
       isInvalid: false,
       errorMsg: '',
     },
@@ -109,7 +139,7 @@ const Index: FC = () => {
   };
 
   const handleErr = (data) => {
-    window.scrollTo(0, 0);
+    scrollToDocTop();
     setErrorData(data);
   };
 
@@ -164,6 +194,7 @@ const Index: FC = () => {
       site_name: formData.site_name.value,
       site_url: formData.site_url.value,
       contact_email: formData.contact_email.value,
+      login_required: formData.login_required.value,
       name: formData.name.value,
       password: formData.password.value,
       email: formData.email.value,
@@ -176,6 +207,8 @@ const Index: FC = () => {
         if (err.isError) {
           const data = handleFormError(err, formData);
           setFormData({ ...data });
+          const ele = document.getElementById(err.list[0].error_field);
+          scrollToElementTop(ele);
         } else {
           handleErr(err);
         }
@@ -298,7 +331,7 @@ const Index: FC = () => {
                           components={{ 1: <code /> }}
                         />{' '}
                         <Trans i18nKey="install.install_now">
-                          You may try{' '}
+                          You may try
                           <a href="###" onClick={(e) => handleInstallNow(e)}>
                             installing now
                           </a>

@@ -1,27 +1,75 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 import { FC, useEffect, useState } from 'react';
-import { Container, Row, Col, Button } from 'react-bootstrap';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { Row, Col, Button } from 'react-bootstrap';
+import {
+  useParams,
+  Link,
+  useNavigate,
+  useSearchParams,
+} from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
 import { usePageTags } from '@/hooks';
 import * as Type from '@/common/interface';
-import { FollowingTags } from '@/components';
-import { useTagInfo, useFollow, useQuerySynonymsTags } from '@/services';
-import QuestionList from '@/components/QuestionList';
+import { FollowingTags, CustomSidebar, Icon } from '@/components';
+import {
+  useTagInfo,
+  useFollow,
+  useQuerySynonymsTags,
+  useQuestionList,
+} from '@/services';
+import QuestionList, { QUESTION_ORDER_KEYS } from '@/components/QuestionList';
 import HotQuestions from '@/components/HotQuestions';
-import { escapeRemove, guard } from '@/utils';
+import { escapeRemove, guard, Storage, scrollToDocTop } from '@/utils';
 import { pathFactory } from '@/router/pathFactory';
+import { QUESTIONS_ORDER_STORAGE_KEY } from '@/common/constants';
 
-const Questions: FC = () => {
+const Index: FC = () => {
   const { t } = useTranslation('translation', { keyPrefix: 'tags' });
   const navigate = useNavigate();
   const routeParams = useParams();
   const curTagName = routeParams.tagName || '';
+  const [urlSearchParams] = useSearchParams();
+  const storageOrder = Storage.get(QUESTIONS_ORDER_STORAGE_KEY);
+  const curOrder =
+    urlSearchParams.get('order') || storageOrder || QUESTION_ORDER_KEYS[0];
+  if (curOrder !== storageOrder) {
+    Storage.set(QUESTIONS_ORDER_STORAGE_KEY, curOrder);
+  }
+  const curPage = Number(urlSearchParams.get('page')) || 1;
+  const reqParams: Type.QueryQuestionsReq = {
+    page_size: 20,
+    page: curPage,
+    order: curOrder as Type.QuestionOrderBy,
+    tag: routeParams.tagName,
+  };
   const [tagInfo, setTagInfo] = useState<any>({});
   const [tagFollow, setTagFollow] = useState<Type.FollowParams>();
   const { data: tagResp, isLoading } = useTagInfo({ name: curTagName });
+  const { data: listData, isLoading: listLoading } = useQuestionList(reqParams);
   const { data: followResp } = useFollow(tagFollow);
-  const { data: synonymsRes } = useQuerySynonymsTags(tagInfo?.tag_id);
+  const { data: synonymsRes } = useQuerySynonymsTags(
+    tagInfo?.tag_id,
+    tagInfo?.status,
+  );
   const toggleFollow = () => {
     if (!guard.tryNormalLogged(true)) {
       return;
@@ -31,6 +79,13 @@ const Questions: FC = () => {
       object_id: tagInfo.tag_id,
     });
   };
+
+  useEffect(() => {
+    if (!listLoading) {
+      scrollToDocTop();
+    }
+  }, [listLoading]);
+
   useEffect(() => {
     if (tagResp) {
       const info = { ...tagResp };
@@ -73,64 +128,75 @@ const Questions: FC = () => {
     keywords: keywords.join(','),
   });
   return (
-    <Container className="pt-4 mt-2 mb-5">
-      <Row className="justify-content-center">
-        <Col xxl={7} lg={8} sm={12}>
-          {isLoading ? (
-            <div className="tag-box mb-5 placeholder-glow">
-              <div className="mb-3 h3 placeholder" style={{ width: '120px' }} />
-              <p
-                className="placeholder w-100 d-block align-top"
-                style={{ height: '24px' }}
-              />
+    <Row className="pt-4 mb-5">
+      <Col className="page-main flex-auto">
+        {isLoading ? (
+          <div className="tag-box mb-5 placeholder-glow">
+            <div className="mb-3 h3 placeholder" style={{ width: '120px' }} />
+            <p
+              className="placeholder w-100 d-block align-top"
+              style={{ height: '24px' }}
+            />
 
-              <div
-                className="placeholder d-block align-top"
-                style={{ height: '38px', width: '100px' }}
-              />
-            </div>
-          ) : (
-            <div className="tag-box mb-5">
-              <h3 className="mb-3">
-                <Link
-                  to={pathFactory.tagLanding(tagInfo.slug_name)}
-                  replace
-                  className="link-dark">
-                  {tagInfo.display_name}
-                </Link>
-              </h3>
+            <div
+              className="placeholder d-block align-top"
+              style={{ height: '38px', width: '100px' }}
+            />
+          </div>
+        ) : (
+          <div className="tag-box mb-5">
+            <h3 className="mb-3">
+              <Link
+                to={pathFactory.tagLanding(tagInfo.slug_name)}
+                replace
+                className="link-dark">
+                {tagInfo.display_name}
+              </Link>
+            </h3>
 
-              <p className="text-break">
-                {escapeRemove(tagInfo.excerpt) || t('no_desc')}
-                <Link to={pathFactory.tagInfo(curTagName)} className="ms-1">
-                  [{t('more')}]
-                </Link>
-              </p>
+            <p className="text-break">
+              {escapeRemove(tagInfo.excerpt) || t('no_desc')}
+              <Link to={pathFactory.tagInfo(curTagName)} className="ms-1">
+                [{t('more')}]
+              </Link>
+            </p>
 
-              <div className="box-ft">
-                {tagInfo.is_follower ? (
+            <div className="box-ft">
+              {tagInfo.is_follower ? (
+                <div>
                   <Button variant="primary" onClick={() => toggleFollow()}>
                     {t('button_following')}
                   </Button>
-                ) : (
-                  <Button
-                    variant="outline-primary"
-                    onClick={() => toggleFollow()}>
-                    {t('button_follow')}
-                  </Button>
-                )}
-              </div>
+                  <Link
+                    className="btn btn-outline-secondary ms-2"
+                    to="/users/settings/notify">
+                    <Icon name="bell-fill" />
+                  </Link>
+                </div>
+              ) : (
+                <Button
+                  variant="outline-primary"
+                  onClick={() => toggleFollow()}>
+                  {t('button_follow')}
+                </Button>
+              )}
             </div>
-          )}
-          <QuestionList source="tag" />
-        </Col>
-        <Col xxl={3} lg={4} sm={12} className="mt-5 mt-lg-0">
-          <FollowingTags />
-          <HotQuestions />
-        </Col>
-      </Row>
-    </Container>
+          </div>
+        )}
+        <QuestionList
+          source="tag"
+          data={listData}
+          order={curOrder}
+          isLoading={listLoading}
+        />
+      </Col>
+      <Col className="page-right-side mt-4 mt-xl-0">
+        <CustomSidebar />
+        <FollowingTags />
+        <HotQuestions />
+      </Col>
+    </Row>
   );
 };
 
-export default Questions;
+export default Index;

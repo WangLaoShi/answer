@@ -1,87 +1,70 @@
-import {
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import React, {
   ForwardRefRenderFunction,
   forwardRef,
   useImperativeHandle,
+  useEffect,
 } from 'react';
-import { Form, Button, Stack } from 'react-bootstrap';
+import { Form, Button } from 'react-bootstrap';
 import { useTranslation } from 'react-i18next';
 
+import isEmpty from 'lodash/isEmpty';
 import classnames from 'classnames';
 
-import BrandUpload from '../BrandUpload';
-import TimeZonePicker from '../TimeZonePicker';
+import { scrollElementIntoView } from '@/utils';
 import type * as Type from '@/common/interface';
 
-export interface JSONSchema {
-  title: string;
-  description?: string;
-  required?: string[];
-  properties: {
-    [key: string]: {
-      type: 'string' | 'boolean' | 'number';
-      title: string;
-      label?: string;
-      description?: string;
-      enum?: Array<string | boolean | number>;
-      enumNames?: string[];
-      default?: string | boolean | number;
-    };
-  };
-}
-export interface UISchema {
-  [key: string]: {
-    'ui:widget'?:
-      | 'textarea'
-      | 'text'
-      | 'checkbox'
-      | 'radio'
-      | 'select'
-      | 'upload'
-      | 'timezone'
-      | 'switch';
-    'ui:options'?: {
-      rows?: number;
-      placeholder?: string;
-      type?:
-        | 'color'
-        | 'date'
-        | 'datetime-local'
-        | 'email'
-        | 'month'
-        | 'number'
-        | 'password'
-        | 'range'
-        | 'search'
-        | 'tel'
-        | 'text'
-        | 'time'
-        | 'url'
-        | 'week';
-      empty?: string;
-      className?: string | string[];
-      validator?: (
-        value,
-        formData?,
-      ) => Promise<string | true | void> | true | string;
-      textRender?: () => React.ReactElement;
-      imageType?: Type.UploadType;
-      acceptType?: string;
-    };
-  };
-}
+import type {
+  JSONSchema,
+  FormProps,
+  FormRef,
+  BaseUIOptions,
+  FormKit,
+  InputGroupOptions,
+} from './types';
+import {
+  Legend,
+  Select,
+  Check,
+  Switch,
+  Timezone,
+  Upload,
+  Textarea,
+  Input,
+  Button as SfButton,
+  InputGroup,
+} from './components';
 
-interface IProps {
-  schema: JSONSchema;
-  uiSchema?: UISchema;
-  formData?: Type.FormDataType;
-  hiddenSubmit?: boolean;
-  onChange?: (data: Type.FormDataType) => void;
-  onSubmit?: (e: React.FormEvent) => void;
-}
+export * from './types';
 
-interface IRef {
-  validator: () => Promise<boolean>;
-}
+/**
+ * TODO:
+ *  - [!] Standardised `Admin/Plugins/Config/index.tsx` method for generating dynamic form configurations.
+ *  - Normalize and document `formData[key].hidden && 'd-none'`
+ *  - Normalize and document `hiddenSubmit`
+ *  - Improving field hints for `formData`
+ *  - Optimise form data updates
+ *    * Automatic field type conversion
+ *    * Dynamic field generation
+ */
 
 /**
  * json schema form
@@ -91,11 +74,12 @@ interface IRef {
  * @param onChange change event
  * @param onSubmit submit event
  */
-const SchemaForm: ForwardRefRenderFunction<IRef, IProps> = (
+const SchemaForm: ForwardRefRenderFunction<FormRef, FormProps> = (
   {
     schema,
     uiSchema = {},
-    formData = {},
+    refreshConfig,
+    formData,
     onChange,
     onSubmit,
     hiddenSubmit = false,
@@ -105,55 +89,55 @@ const SchemaForm: ForwardRefRenderFunction<IRef, IProps> = (
   const { t } = useTranslation('translation', {
     keyPrefix: 'form',
   });
-
-  const { required = [], properties } = schema;
-
+  const { required = [], properties = {} } = schema || {};
   // check required field
   const excludes = required.filter((key) => !properties[key]);
-
   if (excludes.length > 0) {
     console.error(t('not_found_props', { key: excludes.join(', ') }));
   }
-
+  formData ||= {};
   const keys = Object.keys(properties);
+  /**
+   * Prevent components such as `select` from having default values,
+   * which are not generated on `formData`
+   */
+  const setDefaultValueAsDomBehaviour = () => {
+    keys.forEach((k) => {
+      const fieldVal = formData![k]?.value;
+      const metaProp = properties[k];
+      const uiCtrl = uiSchema[k]?.['ui:widget'];
+      if (!metaProp || !uiCtrl || fieldVal !== undefined) {
+        return;
+      }
+      if (uiCtrl === 'select' && metaProp.enum?.[0] !== undefined) {
+        formData![k] = {
+          errorMsg: '',
+          isInvalid: false,
+          value: metaProp.enum?.[0],
+        };
+      }
+    });
+  };
+  useEffect(() => {
+    setDefaultValueAsDomBehaviour();
+  }, [formData]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    const data = {
-      ...formData,
-      [name]: { ...formData[name], value, isInvalid: false },
-    };
-    if (onChange instanceof Function) {
-      onChange(data);
-    }
+  const formKitWithContext: FormKit = {
+    refreshConfig() {
+      if (typeof refreshConfig === 'function') {
+        refreshConfig();
+      }
+    },
   };
 
-  const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    const data = {
-      ...formData,
-      [name]: { ...formData[name], value, isInvalid: false },
-    };
-    if (onChange instanceof Function) {
-      onChange(data);
-    }
-  };
-
-  const handleSwitchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, checked } = e.target;
-    const data = {
-      ...formData,
-      [name]: { ...formData[name], value: checked, isInvalid: false },
-    };
-    if (onChange instanceof Function) {
-      onChange(data);
-    }
-  };
-
+  /**
+   * Form validation
+   * - Currently only dynamic forms are in use, the business form validation has been handed over to the server
+   */
   const requiredValidator = () => {
     const errors: string[] = [];
     required.forEach((key) => {
-      if (!formData[key] || !formData[key].value) {
+      if (!formData![key] || !formData![key].value) {
         errors.push(key);
       }
     });
@@ -169,7 +153,7 @@ const SchemaForm: ForwardRefRenderFunction<IRef, IProps> = (
     keys.forEach((key) => {
       const { validator } = uiSchema[key]?.['ui:options'] || {};
       if (validator instanceof Function) {
-        const value = formData[key]?.value;
+        const value = formData![key]?.value;
         promises.push({
           key,
           promise: validator(value, formData),
@@ -206,35 +190,35 @@ const SchemaForm: ForwardRefRenderFunction<IRef, IProps> = (
     const errors = requiredValidator();
     if (errors.length > 0) {
       formData = errors.reduce((acc, cur) => {
-        console.log('schema.properties[cur]', cur);
         acc[cur] = {
-          ...formData[cur],
+          ...formData![cur],
           isInvalid: true,
           errorMsg:
             uiSchema[cur]?.['ui:options']?.empty ||
-            `${schema.properties[cur]?.title} ${t('empty')}`,
+            `${properties[cur]?.title} ${t('empty')}`,
         };
         return acc;
-      }, formData);
+      }, formData || {});
       if (onChange instanceof Function) {
         onChange({ ...formData });
       }
+      scrollElementIntoView(document.getElementById(errors[0]));
       return false;
     }
     const syncErrors = await syncValidator();
     if (syncErrors.length > 0) {
       formData = syncErrors.reduce((acc, cur) => {
         acc[cur.key] = {
-          ...formData[cur.key],
+          ...formData![cur.key],
           isInvalid: true,
-          errorMsg:
-            cur.msg || `${schema.properties[cur.key].title} ${t('invalid')}`,
+          errorMsg: cur.msg || `${properties[cur.key].title} ${t('invalid')}`,
         };
         return acc;
-      }, formData);
+      }, formData || {});
       if (onChange instanceof Function) {
         onChange({ ...formData });
       }
+      scrollElementIntoView(document.getElementById(syncErrors[0].key));
       return false;
     }
     return true;
@@ -247,253 +231,195 @@ const SchemaForm: ForwardRefRenderFunction<IRef, IProps> = (
       return;
     }
 
-    Object.keys(formData).forEach((key) => {
-      formData[key].isInvalid = false;
-      formData[key].errorMsg = '';
+    Object.keys(formData!).forEach((key) => {
+      formData![key].isInvalid = false;
+      formData![key].errorMsg = '';
     });
     if (onChange instanceof Function) {
-      onChange(formData);
+      onChange(formData!);
     }
     if (onSubmit instanceof Function) {
       onSubmit(e);
     }
   };
 
-  const handleUploadChange = (name: string, value: string) => {
-    const data = { ...formData, [name]: { ...formData[name], value } };
-    if (onChange instanceof Function) {
-      onChange(data);
-    }
-  };
-
-  const handleCheckboxChange = (
-    e: React.ChangeEvent<HTMLInputElement>,
-    index: number,
-  ) => {
-    const { name } = e.target;
-    const data = {
-      ...formData,
-      [name]: {
-        ...formData[name],
-        value: schema.properties[name]?.enum?.[index],
-        isInvalid: false,
-      },
-    };
-    if (onChange instanceof Function) {
-      onChange(data);
-    }
-  };
-
   useImperativeHandle(ref, () => ({
     validator,
   }));
+  if (!formData || !schema || isEmpty(schema.properties)) {
+    return null;
+  }
 
   return (
     <Form noValidate onSubmit={handleSubmit}>
       {keys.map((key) => {
-        const { title, description, label } = properties[key];
-        const { 'ui:widget': widget = 'input', 'ui:options': options = {} } =
-          uiSchema[key] || {};
-        if (widget === 'select') {
-          return (
-            <Form.Group
-              key={title}
-              controlId={key}
-              className={classnames('mb-3', formData[key].hidden && 'd-none')}>
-              <Form.Label>{title}</Form.Label>
-              <Form.Select
-                aria-label={description}
-                name={key}
-                value={formData[key]?.value}
-                onChange={handleSelectChange}
-                isInvalid={formData[key].isInvalid}>
-                {properties[key].enum?.map((item, index) => {
-                  return (
-                    <option value={String(item)} key={String(item)}>
-                      {properties[key].enumNames?.[index]}
-                    </option>
-                  );
-                })}
-              </Form.Select>
-              <Form.Control.Feedback type="invalid">
-                {formData[key]?.errorMsg}
-              </Form.Control.Feedback>
-              {description && (
-                <Form.Text className="text-muted">{description}</Form.Text>
-              )}
-            </Form.Group>
-          );
-        }
-        if (widget === 'checkbox' || widget === 'radio') {
-          return (
-            <Form.Group
-              key={title}
-              className={classnames('mb-3', formData[key].hidden && 'd-none')}
-              controlId={key}>
-              <Form.Label>{title}</Form.Label>
-              <Stack direction="horizontal">
-                {properties[key].enum?.map((item, index) => {
-                  return (
-                    <Form.Check
-                      key={String(item)}
-                      inline
-                      required
-                      type={widget}
-                      name={key}
-                      id={`form-${String(item)}`}
-                      label={properties[key].enumNames?.[index]}
-                      checked={formData[key]?.value === item}
-                      feedback={formData[key]?.errorMsg}
-                      feedbackType="invalid"
-                      isInvalid={formData[key].isInvalid}
-                      onChange={(e) => handleCheckboxChange(e, index)}
-                    />
-                  );
-                })}
-              </Stack>
-              <Form.Control.Feedback type="invalid">
-                {formData[key]?.errorMsg}
-              </Form.Control.Feedback>
-              {description && (
-                <Form.Text className="text-muted">{description}</Form.Text>
-              )}
-            </Form.Group>
-          );
+        const {
+          title,
+          description,
+          enum: enumValues = [],
+          enumNames = [],
+        } = properties[key];
+        const { 'ui:widget': widget = 'input', 'ui:options': uiOpt } =
+          uiSchema?.[key] || {};
+        formData ||= {};
+        const fieldState = formData[key];
+        if (uiOpt?.class_name) {
+          uiOpt.className = uiOpt.class_name;
         }
 
-        if (widget === 'switch') {
-          return (
-            <Form.Group
-              key={title}
-              className={classnames('mb-3', formData[key].hidden && 'd-none')}
-              controlId={key}>
-              <Form.Label>{title}</Form.Label>
-              <Form.Check
-                required
-                id={`switch-${title}`}
-                name={key}
-                type="switch"
-                label={label}
-                checked={formData[key]?.value}
-                feedback={formData[key]?.errorMsg}
-                feedbackType="invalid"
-                isInvalid={formData[key].isInvalid}
-                onChange={handleSwitchChange}
-              />
-              <Form.Control.Feedback type="invalid">
-                {formData[key]?.errorMsg}
-              </Form.Control.Feedback>
-              {description && (
-                <Form.Text className="text-muted">{description}</Form.Text>
-              )}
-            </Form.Group>
-          );
+        const uiSimplify = widget === 'legend' || uiOpt?.simplify;
+        let groupClassName: BaseUIOptions['field_class_name'] = uiOpt?.simplify
+          ? 'mb-2'
+          : 'mb-3';
+        if (widget === 'legend') {
+          groupClassName = 'mb-0';
         }
-        if (widget === 'timezone') {
-          return (
-            <Form.Group
-              key={title}
-              className={classnames('mb-3', formData[key].hidden && 'd-none')}
-              controlId={key}>
-              <Form.Label>{title}</Form.Label>
-              <TimeZonePicker
-                value={formData[key]?.value}
-                name={key}
-                onChange={handleSelectChange}
-              />
-              <Form.Control
-                name={key}
-                className="d-none"
-                isInvalid={formData[key].isInvalid}
-              />
-              <Form.Control.Feedback type="invalid">
-                {formData[key]?.errorMsg}
-              </Form.Control.Feedback>
-              {description && (
-                <Form.Text className="text-muted">{description}</Form.Text>
-              )}
-            </Form.Group>
-          );
+        if (uiOpt?.field_class_name) {
+          groupClassName = uiOpt.field_class_name;
         }
 
-        if (widget === 'upload') {
-          return (
-            <Form.Group
-              key={title}
-              className={classnames('mb-3', formData[key].hidden && 'd-none')}
-              controlId={key}>
-              <Form.Label>{title}</Form.Label>
-              <BrandUpload
-                type={options.imageType || 'avatar'}
-                acceptType={options.acceptType || ''}
-                value={formData[key]?.value}
-                onChange={(value) => handleUploadChange(key, value)}
-              />
-              <Form.Control
-                name={key}
-                className="d-none"
-                isInvalid={formData[key].isInvalid}
-              />
-              <Form.Control.Feedback type="invalid">
-                {formData[key]?.errorMsg}
-              </Form.Control.Feedback>
-              {description && (
-                <Form.Text className="text-muted">{description}</Form.Text>
-              )}
-            </Form.Group>
-          );
-        }
+        const readOnly = uiOpt?.readOnly || false;
 
-        if (widget === 'textarea') {
-          return (
-            <Form.Group
-              controlId={`form-${key}`}
-              key={key}
-              className={classnames('mb-3', formData[key].hidden && 'd-none')}>
-              <Form.Label>{title}</Form.Label>
-              <Form.Control
-                as="textarea"
-                name={key}
-                placeholder={options?.placeholder || ''}
-                type={options?.type || 'text'}
-                value={formData[key]?.value}
-                onChange={handleInputChange}
-                isInvalid={formData[key].isInvalid}
-                rows={options?.rows || 3}
-                className={classnames(options.className)}
-              />
-              <Form.Control.Feedback type="invalid">
-                {formData[key]?.errorMsg}
-              </Form.Control.Feedback>
-
-              {description && (
-                <Form.Text className="text-muted">{description}</Form.Text>
-              )}
-            </Form.Group>
-          );
-        }
         return (
           <Form.Group
+            key={`${title}-${key}`}
             controlId={key}
-            key={key}
-            className={classnames('mb-3', formData[key].hidden && 'd-none')}>
-            <Form.Label>{title}</Form.Label>
-            <Form.Control
-              name={key}
-              placeholder={options?.placeholder || ''}
-              type={options?.type || 'text'}
-              value={formData[key]?.value}
-              onChange={handleInputChange}
-              style={options?.type === 'color' ? { width: '6rem' } : {}}
-              isInvalid={formData[key].isInvalid}
-            />
+            className={classnames(
+              groupClassName,
+              formData[key].hidden ? 'd-none' : null,
+            )}>
+            {/* Uniform processing `label` */}
+            {title && !uiSimplify ? <Form.Label>{title}</Form.Label> : null}
+            {/* Handling of individual specific controls */}
+            {widget === 'legend' ? (
+              <Legend title={title} className={String(uiOpt?.className)} />
+            ) : null}
+            {widget === 'select' ? (
+              <Select
+                desc={description}
+                fieldName={key}
+                onChange={onChange}
+                enumValues={enumValues}
+                enumNames={enumNames}
+                formData={formData}
+                readOnly={readOnly}
+              />
+            ) : null}
+            {widget === 'radio' || widget === 'checkbox' ? (
+              <Check
+                type={widget}
+                fieldName={key}
+                onChange={onChange}
+                enumValues={enumValues}
+                enumNames={enumNames}
+                formData={formData}
+                readOnly={readOnly}
+              />
+            ) : null}
+            {widget === 'switch' ? (
+              <Switch
+                label={uiOpt && 'label' in uiOpt ? uiOpt.label : ''}
+                fieldName={key}
+                onChange={onChange}
+                formData={formData}
+                readOnly={readOnly}
+              />
+            ) : null}
+            {widget === 'timezone' ? (
+              <Timezone
+                fieldName={key}
+                onChange={onChange}
+                formData={formData}
+                readOnly={readOnly}
+              />
+            ) : null}
+            {widget === 'upload' ? (
+              <Upload
+                type={
+                  uiOpt && 'imageType' in uiOpt ? uiOpt.imageType : undefined
+                }
+                acceptType={
+                  uiOpt && 'acceptType' in uiOpt ? uiOpt.acceptType : ''
+                }
+                fieldName={key}
+                onChange={onChange}
+                formData={formData}
+                readOnly={readOnly}
+                imgClassNames={
+                  uiOpt && 'className' in uiOpt ? uiOpt.className : ''
+                }
+              />
+            ) : null}
+            {widget === 'textarea' ? (
+              <Textarea
+                placeholder={
+                  uiOpt && 'placeholder' in uiOpt ? uiOpt.placeholder : ''
+                }
+                rows={uiOpt && 'rows' in uiOpt ? uiOpt.rows : 3}
+                className={uiOpt && 'className' in uiOpt ? uiOpt.className : ''}
+                fieldName={key}
+                onChange={onChange}
+                formData={formData}
+                readOnly={readOnly}
+              />
+            ) : null}
+            {widget === 'input' ? (
+              <Input
+                type={uiOpt && 'inputType' in uiOpt ? uiOpt.inputType : 'text'}
+                placeholder={
+                  uiOpt && 'placeholder' in uiOpt ? uiOpt.placeholder : ''
+                }
+                fieldName={key}
+                onChange={onChange}
+                formData={formData}
+                readOnly={readOnly}
+              />
+            ) : null}
+            {widget === 'button' ? (
+              <SfButton
+                fieldName={key}
+                text={uiOpt && 'text' in uiOpt ? uiOpt.text : ''}
+                action={uiOpt && 'action' in uiOpt ? uiOpt.action : undefined}
+                formKit={formKitWithContext}
+                readOnly={readOnly}
+                variant={
+                  uiOpt && 'variant' in uiOpt ? uiOpt.variant : undefined
+                }
+                size={uiOpt && 'size' in uiOpt ? uiOpt.size : undefined}
+                title={uiOpt && 'title' in uiOpt ? uiOpt?.title : ''}
+              />
+            ) : null}
+            {widget === 'input_group' ? (
+              <InputGroup
+                formKitWithContext={formKitWithContext}
+                uiOpt={uiOpt as InputGroupOptions}
+                prefixText={
+                  (uiOpt && 'prefixText' in uiOpt && uiOpt.prefixText) || ''
+                }
+                suffixText={
+                  (uiOpt && 'suffixText' in uiOpt && uiOpt.suffixText) || ''
+                }>
+                <Input
+                  type={
+                    uiOpt && 'inputType' in uiOpt ? uiOpt.inputType : 'text'
+                  }
+                  placeholder={
+                    uiOpt && 'placeholder' in uiOpt ? uiOpt.placeholder : ''
+                  }
+                  fieldName={key}
+                  onChange={onChange}
+                  formData={formData}
+                  readOnly={readOnly}
+                />
+              </InputGroup>
+            ) : null}
+            {/* Unified handling of `Feedback` and `Text` */}
             <Form.Control.Feedback type="invalid">
-              {formData[key]?.errorMsg}
+              {fieldState?.errorMsg}
             </Form.Control.Feedback>
-
-            {description && (
-              <Form.Text className="text-muted">{description}</Form.Text>
-            )}
+            {description ? (
+              <Form.Text dangerouslySetInnerHTML={{ __html: description }} />
+            ) : null}
           </Form.Group>
         );
       })}
@@ -505,18 +431,49 @@ const SchemaForm: ForwardRefRenderFunction<IRef, IProps> = (
     </Form>
   );
 };
+
 export const initFormData = (schema: JSONSchema): Type.FormDataType => {
   const formData: Type.FormDataType = {};
-  Object.keys(schema.properties).forEach((key) => {
-    const v = schema.properties[key]?.default;
-    // TODO: set default value by property type
+  const props: JSONSchema['properties'] = schema?.properties || {};
+  Object.keys(props).forEach((key) => {
+    const prop = props[key];
+    let defaultVal: any = '';
+    if (Array.isArray(prop.default) && prop.enum && prop.enum.length > 0) {
+      // for checkbox default values
+      defaultVal = prop.enum;
+    } else {
+      defaultVal = prop?.default;
+    }
     formData[key] = {
-      value: typeof v !== 'undefined' ? v : '',
+      value: defaultVal,
       isInvalid: false,
       errorMsg: '',
     };
   });
   return formData;
+};
+
+export const mergeFormData = (
+  target: Type.FormDataType | null,
+  origin: Type.FormDataType | null,
+) => {
+  if (!target) {
+    return origin;
+  }
+  if (!origin) {
+    return target;
+  }
+  Object.keys(target).forEach((k) => {
+    const oi = origin[k];
+    if (oi && oi.value !== undefined) {
+      target[k] = {
+        value: oi.value,
+        isInvalid: false,
+        errorMsg: '',
+      };
+    }
+  });
+  return target;
 };
 
 export default forwardRef(SchemaForm);

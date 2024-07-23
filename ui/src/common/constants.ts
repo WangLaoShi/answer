@@ -1,11 +1,43 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 export const DEFAULT_SITE_NAME = 'Answer';
 export const DEFAULT_LANG = 'en_US';
 export const CURRENT_LANG_STORAGE_KEY = '_a_lang_';
 export const LANG_RESOURCE_STORAGE_KEY = '_a_lang_r_';
-export const LOGGED_USER_STORAGE_KEY = '_a_lui_';
 export const LOGGED_TOKEN_STORAGE_KEY = '_a_ltk_';
 export const REDIRECT_PATH_STORAGE_KEY = '_a_rp_';
 export const CAPTCHA_CODE_STORAGE_KEY = '_a_captcha_';
+export const DRAFT_QUESTION_STORAGE_KEY = '_a_dq_';
+export const DRAFT_ANSWER_STORAGE_KEY = '_a_da_';
+export const DRAFT_TIMESIGH_STORAGE_KEY = '|_a_t_s_|';
+export const QUESTIONS_ORDER_STORAGE_KEY = '_a_qok_';
+export const DEFAULT_THEME = 'system';
+export const ADMIN_PRIVILEGE_CUSTOM_LEVEL = 99;
+export const SKELETON_SHOW_TIME = 1000;
+
+export const USER_AGENT_NAMES = {
+  SegmentFault: 'SegmentFault',
+  WeChat: 'WeChat',
+  WeCom: 'WeCom',
+  DingTalk: 'DingTalk',
+};
 
 export const ADMIN_LIST_STATUS = {
   // normal;
@@ -23,6 +55,11 @@ export const ADMIN_LIST_STATUS = {
     variant: 'text-bg-danger',
     name: 'deleted',
   },
+  // pending
+  11: {
+    variant: 'text-bg-warning',
+    name: 'pending',
+  },
   normal: {
     variant: 'text-bg-success',
     name: 'normal',
@@ -34,6 +71,14 @@ export const ADMIN_LIST_STATUS = {
   deleted: {
     variant: 'text-bg-danger',
     name: 'deleted',
+  },
+  pending: {
+    variant: 'text-bg-warning',
+    name: 'pending',
+  },
+  unlisted: {
+    variant: 'text-bg-secondary',
+    name: 'unlisted',
   },
 };
 
@@ -50,17 +95,14 @@ export const ADMIN_NAV_MENUS = [
     name: 'users',
   },
   {
-    name: 'flags',
-    // badgeContent: 5,
-  },
-  {
     name: 'customize',
     children: [
       {
         name: 'themes',
       },
       {
-        name: 'css-html',
+        name: 'css_html',
+        path: 'css-html',
       },
     ],
   },
@@ -75,11 +117,20 @@ export const ADMIN_NAV_MENUS = [
       { name: 'write' },
       { name: 'seo' },
       { name: 'login' },
+      { name: 'users', path: 'settings-users' },
+      { name: 'privileges' },
+    ],
+  },
+  {
+    name: 'plugins',
+    children: [
+      {
+        name: 'installed_plugins',
+        path: 'installed-plugins',
+      },
     ],
   },
 ];
-
-export const ADMIN_LEGAL_MENUS = [{ name: 'tos' }, { name: 'privacy' }];
 
 export const TIMEZONES = [
   {
@@ -570,7 +621,7 @@ export const TIMEZONES = [
     options: [{ value: 'UTC', label: 'UTC' }],
   },
 ];
-export const DEFAULT_TIMEZONE = 'UTC+0';
+export const DEFAULT_TIMEZONE = 'UTC';
 
 export const TIMELINE_NORMAL_ACTIVITY_TYPE = [
   'undeleted',
@@ -579,4 +630,21 @@ export const TIMELINE_NORMAL_ACTIVITY_TYPE = [
   'upvote',
   'reopened',
   'closed',
+  'pin',
+  'unpin',
+  'show',
+  'hide',
 ];
+
+export const SYSTEM_AVATAR_OPTIONS = [
+  {
+    label: 'System',
+    value: 'system',
+  },
+  {
+    label: 'Gravatar',
+    value: 'gravatar',
+  },
+];
+
+export const TAG_SLUG_NAME_MAX_LENGTH = 35;

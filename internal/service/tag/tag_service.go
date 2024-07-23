@@ -1,35 +1,55 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package tag
 
 import (
 	"context"
 	"encoding/json"
 
-	"github.com/answerdev/answer/internal/base/constant"
-	"github.com/answerdev/answer/internal/service/activity_queue"
-	"github.com/answerdev/answer/internal/service/revision_common"
-	"github.com/answerdev/answer/internal/service/siteinfo_common"
-	tagcommonser "github.com/answerdev/answer/internal/service/tag_common"
-	"github.com/answerdev/answer/pkg/htmltext"
-
-	"github.com/answerdev/answer/internal/base/pager"
-	"github.com/answerdev/answer/internal/base/reason"
-	"github.com/answerdev/answer/internal/entity"
-	"github.com/answerdev/answer/internal/schema"
-	"github.com/answerdev/answer/internal/service/activity_common"
-	"github.com/answerdev/answer/internal/service/permission"
-	"github.com/answerdev/answer/pkg/converter"
+	"github.com/apache/incubator-answer/internal/base/constant"
+	"github.com/apache/incubator-answer/internal/service/activity_queue"
+	"github.com/apache/incubator-answer/internal/service/revision_common"
+	"github.com/apache/incubator-answer/internal/service/siteinfo_common"
+	tagcommonser "github.com/apache/incubator-answer/internal/service/tag_common"
+	"github.com/apache/incubator-answer/pkg/htmltext"
 	"github.com/jinzhu/copier"
+
+	"github.com/apache/incubator-answer/internal/base/pager"
+	"github.com/apache/incubator-answer/internal/base/reason"
+	"github.com/apache/incubator-answer/internal/entity"
+	"github.com/apache/incubator-answer/internal/schema"
+	"github.com/apache/incubator-answer/internal/service/activity_common"
+	"github.com/apache/incubator-answer/internal/service/permission"
+	"github.com/apache/incubator-answer/pkg/converter"
 	"github.com/segmentfault/pacman/errors"
 	"github.com/segmentfault/pacman/log"
 )
 
 // TagService user service
 type TagService struct {
-	tagRepo          tagcommonser.TagRepo
-	tagCommonService *tagcommonser.TagCommonService
-	revisionService  *revision_common.RevisionService
-	followCommon     activity_common.FollowRepo
-	siteInfoService  *siteinfo_common.SiteInfoCommonService
+	tagRepo              tagcommonser.TagRepo
+	tagCommonService     *tagcommonser.TagCommonService
+	revisionService      *revision_common.RevisionService
+	followCommon         activity_common.FollowRepo
+	siteInfoService      siteinfo_common.SiteInfoCommonService
+	activityQueueService activity_queue.ActivityQueueService
 }
 
 // NewTagService new tag service
@@ -38,13 +58,16 @@ func NewTagService(
 	tagCommonService *tagcommonser.TagCommonService,
 	revisionService *revision_common.RevisionService,
 	followCommon activity_common.FollowRepo,
-	siteInfoService *siteinfo_common.SiteInfoCommonService) *TagService {
+	siteInfoService siteinfo_common.SiteInfoCommonService,
+	activityQueueService activity_queue.ActivityQueueService,
+) *TagService {
 	return &TagService{
-		tagRepo:          tagRepo,
-		tagCommonService: tagCommonService,
-		revisionService:  revisionService,
-		followCommon:     followCommon,
-		siteInfoService:  siteInfoService,
+		tagRepo:              tagRepo,
+		tagCommonService:     tagCommonService,
+		revisionService:      revisionService,
+		followCommon:         followCommon,
+		siteInfoService:      siteInfoService,
+		activityQueueService: activityQueueService,
 	}
 }
 
@@ -73,7 +96,7 @@ func (ts *TagService) RemoveTag(ctx context.Context, req *schema.RemoveTagReq) (
 	if err != nil {
 		return err
 	}
-	activity_queue.AddActivity(&schema.ActivityMsg{
+	ts.activityQueueService.Send(ctx, &schema.ActivityMsg{
 		UserID:           req.UserID,
 		ObjectID:         req.TagID,
 		OriginalObjectID: req.TagID,
@@ -87,6 +110,33 @@ func (ts *TagService) UpdateTag(ctx context.Context, req *schema.UpdateTagReq) (
 	return ts.tagCommonService.UpdateTag(ctx, req)
 }
 
+// RecoverTag recover tag
+func (ts *TagService) RecoverTag(ctx context.Context, req *schema.RecoverTagReq) (err error) {
+	tagInfo, exist, err := ts.tagRepo.MustGetTagByNameOrID(ctx, req.TagID, "")
+	if err != nil {
+		return err
+	}
+	if !exist {
+		return errors.BadRequest(reason.TagNotFound)
+	}
+	if tagInfo.Status != entity.TagStatusDeleted {
+		return nil
+	}
+
+	err = ts.tagRepo.RecoverTag(ctx, req.TagID)
+	if err != nil {
+		return err
+	}
+	ts.activityQueueService.Send(ctx, &schema.ActivityMsg{
+		UserID:           req.UserID,
+		TriggerUserID:    converter.StringToInt64(req.UserID),
+		ObjectID:         req.TagID,
+		OriginalObjectID: req.TagID,
+		ActivityTypeKey:  constant.ActTagUndeleted,
+	})
+	return nil
+}
+
 // GetTagInfo get tag one
 func (ts *TagService) GetTagInfo(ctx context.Context, req *schema.GetTagInfoReq) (resp *schema.GetTagResp, err error) {
 	var (
@@ -98,11 +148,15 @@ func (ts *TagService) GetTagInfo(ctx context.Context, req *schema.GetTagInfoReq)
 	} else {
 		tagInfo, exist, err = ts.tagCommonService.GetTagBySlugName(ctx, req.Name)
 	}
+	// If user can recover deleted tag, try to search in all tags including deleted tags
+	if !exist && req.CanRecover {
+		tagInfo, exist, err = ts.tagRepo.MustGetTagByNameOrID(ctx, req.ID, req.Name)
+	}
 	if err != nil {
 		return nil, err
 	}
 	if !exist {
-		return nil, errors.BadRequest(reason.TagNotFound)
+		return nil, errors.NotFound(reason.TagNotFound)
 	}
 
 	resp = &schema.GetTagResp{}
@@ -113,7 +167,7 @@ func (ts *TagService) GetTagInfo(ctx context.Context, req *schema.GetTagInfoReq)
 			return nil, err
 		}
 		if !exist {
-			return nil, errors.BadRequest(reason.TagNotFound)
+			return nil, errors.NotFound(reason.TagNotFound)
 		}
 		resp.MainTagSlugName = tagInfo.SlugName
 	}
@@ -130,7 +184,8 @@ func (ts *TagService) GetTagInfo(ctx context.Context, req *schema.GetTagInfoReq)
 	resp.Recommend = tagInfo.Recommend
 	resp.Reserved = tagInfo.Reserved
 	resp.IsFollower = ts.checkTagIsFollow(ctx, req.UserID, tagInfo.ID)
-	resp.MemberActions = permission.GetTagPermission(ctx, req.CanEdit, req.CanDelete)
+	resp.Status = entity.TagStatusDisplayMapping[tagInfo.Status]
+	resp.MemberActions = permission.GetTagPermission(ctx, tagInfo.Status, req.CanEdit, req.CanDelete, req.CanRecover)
 	resp.GetExcerpt()
 	return resp, nil
 }
@@ -298,7 +353,7 @@ func (ts *TagService) UpdateTagSynonym(ctx context.Context, req *schema.UpdateTa
 			if err != nil {
 				return err
 			}
-			activity_queue.AddActivity(&schema.ActivityMsg{
+			ts.activityQueueService.Send(ctx, &schema.ActivityMsg{
 				UserID:           req.UserID,
 				ObjectID:         tag.ID,
 				OriginalObjectID: tag.ID,
@@ -353,10 +408,10 @@ func (ts *TagService) GetTagWithPage(ctx context.Context, req *schema.GetTagWith
 
 	resp := make([]*schema.GetTagPageResp, 0)
 	for _, tag := range tags {
-		//excerpt := htmltext.FetchExcerpt(tag.ParsedText, "...", 240)
-		resp = append(resp, &schema.GetTagPageResp{
+		item := &schema.GetTagPageResp{
 			TagID:         tag.ID,
 			SlugName:      tag.SlugName,
+			Description:   htmltext.FetchExcerpt(tag.ParsedText, "...", 240),
 			DisplayName:   tag.DisplayName,
 			OriginalText:  tag.OriginalText,
 			ParsedText:    tag.ParsedText,
@@ -367,7 +422,10 @@ func (ts *TagService) GetTagWithPage(ctx context.Context, req *schema.GetTagWith
 			UpdatedAt:     tag.UpdatedAt.Unix(),
 			Recommend:     tag.Recommend,
 			Reserved:      tag.Reserved,
-		})
+		}
+		item.GetExcerpt()
+		resp = append(resp, item)
+
 	}
 	return pager.NewPageModel(total, resp), nil
 }
@@ -377,7 +435,7 @@ func (ts *TagService) checkTagIsFollow(ctx context.Context, userID, tagID string
 	if len(userID) == 0 {
 		return false
 	}
-	followed, err := ts.followCommon.IsFollowed(userID, tagID)
+	followed, err := ts.followCommon.IsFollowed(ctx, userID, tagID)
 	if err != nil {
 		log.Error(err)
 	}

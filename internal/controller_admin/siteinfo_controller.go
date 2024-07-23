@@ -1,12 +1,32 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package controller_admin
 
 import (
+	"html"
 	"net/http"
 
-	"github.com/answerdev/answer/internal/base/handler"
-	"github.com/answerdev/answer/internal/base/middleware"
-	"github.com/answerdev/answer/internal/schema"
-	"github.com/answerdev/answer/internal/service/siteinfo"
+	"github.com/apache/incubator-answer/internal/base/handler"
+	"github.com/apache/incubator-answer/internal/base/middleware"
+	"github.com/apache/incubator-answer/internal/schema"
+	"github.com/apache/incubator-answer/internal/service/siteinfo"
 	"github.com/gin-gonic/gin"
 )
 
@@ -139,6 +159,19 @@ func (sc *SiteInfoController) GetSiteTheme(ctx *gin.Context) {
 	handler.HandleResponse(ctx, err, resp)
 }
 
+// GetSiteUsers get site user config
+// @Summary get site user config
+// @Description get site user config
+// @Security ApiKeyAuth
+// @Tags admin
+// @Produce json
+// @Success 200 {object} handler.RespBody{data=schema.SiteUsersResp}
+// @Router /answer/admin/api/siteinfo/users [get]
+func (sc *SiteInfoController) GetSiteUsers(ctx *gin.Context) {
+	resp, err := sc.siteInfoService.GetSiteUsers(ctx)
+	handler.HandleResponse(ctx, err, resp)
+}
+
 // GetRobots get site robots information
 // @Summary get site robots information
 // @Description get site robots information
@@ -205,6 +238,7 @@ func (sc *SiteInfoController) UpdateGeneral(ctx *gin.Context) {
 		return
 	}
 	err := sc.siteInfoService.SaveSiteGeneral(ctx, req)
+	req.Name = html.UnescapeString(req.Name)
 	handler.HandleResponse(ctx, err, req)
 }
 
@@ -336,6 +370,24 @@ func (sc *SiteInfoController) SaveSiteTheme(ctx *gin.Context) {
 	handler.HandleResponse(ctx, err, nil)
 }
 
+// UpdateSiteUsers update site config about users
+// @Summary update site info config about users
+// @Description update site info config about users
+// @Security ApiKeyAuth
+// @Tags admin
+// @Produce json
+// @Param data body schema.SiteUsersReq true "users info"
+// @Success 200 {object} handler.RespBody{}
+// @Router /answer/admin/api/siteinfo/users [put]
+func (sc *SiteInfoController) UpdateSiteUsers(ctx *gin.Context) {
+	req := &schema.SiteUsersReq{}
+	if handler.BindAndCheck(ctx, req) {
+		return
+	}
+	err := sc.siteInfoService.SaveSiteUsers(ctx, req)
+	handler.HandleResponse(ctx, err, nil)
+}
+
 // GetSMTPConfig get smtp config
 // @Summary GetSMTPConfig get smtp config
 // @Description GetSMTPConfig get smtp config
@@ -364,5 +416,36 @@ func (sc *SiteInfoController) UpdateSMTPConfig(ctx *gin.Context) {
 		return
 	}
 	err := sc.siteInfoService.UpdateSMTPConfig(ctx, req)
+	handler.HandleResponse(ctx, err, nil)
+}
+
+// GetPrivilegesConfig get privileges config
+// @Summary GetPrivilegesConfig get privileges config
+// @Description GetPrivilegesConfig get privileges config
+// @Security ApiKeyAuth
+// @Tags admin
+// @Produce json
+// @Success 200 {object} handler.RespBody{data=schema.GetPrivilegesConfigResp}
+// @Router /answer/admin/api/setting/privileges [get]
+func (sc *SiteInfoController) GetPrivilegesConfig(ctx *gin.Context) {
+	resp, err := sc.siteInfoService.GetPrivilegesConfig(ctx)
+	handler.HandleResponse(ctx, err, resp)
+}
+
+// UpdatePrivilegesConfig update privileges config
+// @Summary update privileges config
+// @Description update privileges config
+// @Security ApiKeyAuth
+// @Tags admin
+// @Produce json
+// @Param data body schema.UpdatePrivilegesConfigReq true "config"
+// @Success 200 {object} handler.RespBody{}
+// @Router /answer/admin/api/setting/privileges [put]
+func (sc *SiteInfoController) UpdatePrivilegesConfig(ctx *gin.Context) {
+	req := &schema.UpdatePrivilegesConfigReq{}
+	if handler.BindAndCheck(ctx, req) {
+		return
+	}
+	err := sc.siteInfoService.UpdatePrivilegesConfig(ctx, req)
 	handler.HandleResponse(ctx, err, nil)
 }

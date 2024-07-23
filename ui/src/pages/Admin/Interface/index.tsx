@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 import { FC, FormEvent, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -7,16 +26,20 @@ import {
   FormDataType,
   AdminSettingsInterface,
 } from '@/common/interface';
-import { interfaceStore } from '@/stores';
+import { interfaceStore, loggedUserInfoStore } from '@/stores';
 import { JSONSchema, SchemaForm, UISchema } from '@/components';
 import { DEFAULT_TIMEZONE } from '@/common/constants';
-import { updateInterfaceSetting, useInterfaceSetting } from '@/services';
+import {
+  updateInterfaceSetting,
+  useInterfaceSetting,
+  getLoggedUserInfo,
+} from '@/services';
 import {
   setupAppLanguage,
   loadLanguageOptions,
   setupAppTimeZone,
 } from '@/utils/localize';
-import { handleFormError } from '@/utils';
+import { handleFormError, scrollToElementTop } from '@/utils';
 
 const Interface: FC = () => {
   const { t } = useTranslation('translation', {
@@ -36,11 +59,13 @@ const Interface: FC = () => {
         description: t('language.text'),
         enum: langs?.map((lang) => lang.value),
         enumNames: langs?.map((lang) => lang.label),
+        default: setting?.language || storeInterface.language,
       },
       time_zone: {
         type: 'string',
         title: t('time_zone.label'),
         description: t('time_zone.text'),
+        default: setting?.time_zone || DEFAULT_TIMEZONE,
       },
     },
   };
@@ -104,6 +129,9 @@ const Interface: FC = () => {
         interfaceStore.getState().update(reqParams);
         setupAppLanguage();
         setupAppTimeZone();
+        getLoggedUserInfo().then((info) => {
+          loggedUserInfoStore.getState().update(info);
+        });
         Toast.onShow({
           msg: t('update', { keyPrefix: 'toast' }),
           variant: 'success',
@@ -113,6 +141,8 @@ const Interface: FC = () => {
         if (err.isError) {
           const data = handleFormError(err, formData);
           setFormData({ ...data });
+          const ele = document.getElementById(err.list[0].error_field);
+          scrollToElementTop(ele);
         }
       });
   };

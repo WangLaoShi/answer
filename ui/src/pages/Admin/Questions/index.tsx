@@ -1,5 +1,24 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 import { FC } from 'react';
-import { Button, Form, Table, Stack } from 'react-bootstrap';
+import { Form, Table, Stack } from 'react-bootstrap';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
@@ -9,19 +28,20 @@ import {
   FormatTime,
   Icon,
   Pagination,
-  Modal,
   BaseUserCard,
   Empty,
   QueryGroup,
 } from '@/components';
 import { ADMIN_LIST_STATUS } from '@/common/constants';
-import { useEditStatusModal, useReportModal } from '@/hooks';
 import * as Type from '@/common/interface';
-import { useQuestionSearch, changeQuestionStatus } from '@/services';
+import { useQuestionSearch } from '@/services';
 import { pathFactory } from '@/router/pathFactory';
+
+import Action from './components/Action';
 
 const questionFilterItems: Type.AdminContentsFilterBy[] = [
   'normal',
+  'pending',
   'closed',
   'deleted',
 ];
@@ -46,53 +66,6 @@ const Questions: FC = () => {
   });
   const count = listData?.count || 0;
 
-  const closeModal = useReportModal(refreshList);
-
-  const handleCallback = (id, type) => {
-    if (type === 'normal') {
-      changeQuestionStatus(id, 'available').then(() => {
-        refreshList();
-      });
-    }
-    if (type === 'closed') {
-      closeModal.onShow({
-        type: 'question',
-        id,
-        action: 'close',
-      });
-    }
-    if (type === 'deleted') {
-      const item = listData?.list?.filter((v) => v.id === id)?.[0];
-      Modal.confirm({
-        title: t('title', { keyPrefix: 'delete' }),
-        content:
-          item.answer_count > 0
-            ? `<p>${t('question', { keyPrefix: 'delete' })}</p>`
-            : `<p>${t('other', { keyPrefix: 'delete' })}</p>`,
-        cancelBtnVariant: 'link',
-        confirmBtnVariant: 'danger',
-        confirmText: t('delete', { keyPrefix: 'btns' }),
-        onConfirm: () => {
-          changeQuestionStatus(id, 'deleted').then(() => {
-            refreshList();
-          });
-        },
-      });
-    }
-  };
-
-  const changeModal = useEditStatusModal({
-    editType: 'question',
-    callback: handleCallback,
-  });
-
-  const handleChange = (itemId) => {
-    changeModal.onShow({
-      id: itemId,
-      type: curFilter,
-    });
-  };
-
   const handleFilter = (e) => {
     urlSearchParams.set('query', e.target.value);
     urlSearchParams.delete('page');
@@ -101,34 +74,35 @@ const Questions: FC = () => {
   return (
     <>
       <h3 className="mb-4">{t('page_title')}</h3>
-      <div className="d-flex justify-content-between align-items-center mb-3">
+      <div className="d-flex flex-wrap justify-content-between align-items-center mb-3">
         <QueryGroup
           data={questionFilterItems}
           currentSort={curFilter}
           sortKey="status"
-          i18nKeyPrefix="admin.questions"
+          i18nKeyPrefix="btns"
         />
 
         <Form.Control
           value={curQuery}
           size="sm"
-          type="input"
+          type="search"
           placeholder={t('filter.placeholder')}
           onChange={handleFilter}
           style={{ width: '12.25rem' }}
+          className="mt-3 mt-sm-0"
         />
       </div>
-      <Table>
+      <Table responsive="md">
         <thead>
           <tr>
-            <th>{t('post')}</th>
+            <th className="min-w-15">{t('post')}</th>
             <th style={{ width: '8%' }}>{t('votes')}</th>
             <th style={{ width: '8%' }}>{t('answers')}</th>
-            <th style={{ width: '20%' }}>{t('created')}</th>
-            <th style={{ width: '9%' }}>{t('status')}</th>
-            {curFilter !== 'deleted' && (
-              <th style={{ width: '10%' }}>{t('action')}</th>
-            )}
+            <th style={{ width: '15%' }}>{t('created')}</th>
+            <th style={{ width: '14%' }}>{t('status')}</th>
+            <th style={{ width: '10%' }} className="text-end">
+              {t('action')}
+            </th>
           </tr>
         </thead>
         <tbody className="align-middle">
@@ -136,13 +110,13 @@ const Questions: FC = () => {
             return (
               <tr key={li.id}>
                 <td>
-                  <a
-                    href={pathFactory.questionLanding(li.id, li.url_title)}
+                  <Link
+                    to={pathFactory.questionLanding(li.id, li.url_title)}
                     target="_blank"
                     className="text-break text-wrap"
                     rel="noreferrer">
                     {li.title}
-                  </a>
+                  </Link>
                   {li.accepted_answer_id > 0 && (
                     <Icon
                       name="check-circle-fill"
@@ -160,9 +134,9 @@ const Questions: FC = () => {
                 </td>
                 <td>
                   <Stack>
-                    <BaseUserCard data={li.user_info} />
+                    <BaseUserCard data={li.user_info} nameMaxWidth="130px" />
                     <FormatTime
-                      className="fs-14 text-secondary"
+                      className="small text-secondary"
                       time={li.create_time}
                     />
                   </Stack>
@@ -171,21 +145,36 @@ const Questions: FC = () => {
                   <span
                     className={classNames(
                       'badge',
+                      'me-1',
+                      'mb-1',
                       ADMIN_LIST_STATUS[curFilter]?.variant,
                     )}>
-                    {t(ADMIN_LIST_STATUS[curFilter]?.name)}
+                    {t(ADMIN_LIST_STATUS[curFilter]?.name, {
+                      keyPrefix: 'btns',
+                    })}
                   </span>
+                  {li.show === 2 && (
+                    <span
+                      className={classNames(
+                        'badge',
+                        ADMIN_LIST_STATUS.unlisted.variant,
+                      )}>
+                      {t(ADMIN_LIST_STATUS.unlisted.name, {
+                        keyPrefix: 'btns',
+                      })}
+                    </span>
+                  )}
                 </td>
-                {curFilter !== 'deleted' && (
-                  <td>
-                    <Button
-                      variant="link"
-                      className="p-0 btn-no-border"
-                      onClick={() => handleChange(li.id)}>
-                      {t('change')}
-                    </Button>
-                  </td>
-                )}
+
+                <td className="text-end">
+                  <Action
+                    itemData={{ id: li.id, answer_count: li.answer_count }}
+                    refreshList={refreshList}
+                    curFilter={curFilter}
+                    show={li.show}
+                    pin={li.pin}
+                  />
+                </td>
               </tr>
             );
           })}

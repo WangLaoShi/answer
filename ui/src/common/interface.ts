@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 export interface FormValue<T = any> {
   value: T;
   isInvalid: boolean;
@@ -7,6 +26,11 @@ export interface FormValue<T = any> {
 
 export interface FormDataType {
   [prop: string]: FormValue;
+}
+
+export interface FieldError {
+  error_field: string;
+  error_msg: string;
 }
 
 export interface Paging {
@@ -24,14 +48,15 @@ export interface ReportParams {
 export interface TagBase {
   display_name: string;
   slug_name: string;
-  recommend: boolean;
-  reserved: boolean;
+  original_text?: string;
+  recommend?: boolean;
+  reserved?: boolean;
 }
 
 export interface Tag extends TagBase {
   main_tag_slug_name?: string;
-  original_text?: string;
   parsed_text?: string;
+  tag_id?: string;
 }
 
 export interface SynonymsTag extends Tag {
@@ -51,13 +76,17 @@ export interface TagInfo extends TagBase {
   updated_at?;
   main_tag_slug_name?: string;
   excerpt?;
+  status: string;
 }
-export interface QuestionParams {
+export interface QuestionParams extends ImgCodeReq {
   title: string;
   url_title?: string;
   content: string;
-  html?: string;
   tags: Tag[];
+}
+
+export interface QuestionWithAnswer extends QuestionParams {
+  answer_content: string;
 }
 
 export interface ListResult<T = any> {
@@ -65,7 +94,7 @@ export interface ListResult<T = any> {
   list: T[];
 }
 
-export interface AnswerParams {
+export interface AnswerParams extends ImgCodeReq {
   content: string;
   html: string;
   question_id: string;
@@ -101,6 +130,20 @@ export interface ModifyUserReq {
   website: string;
 }
 
+enum RoleId {
+  User = 1,
+  Admin = 2,
+  Moderator = 3,
+}
+
+export interface User {
+  username: string;
+  rank: number;
+  vote_count: number;
+  display_name: string;
+  avatar: string;
+}
+
 export interface UserInfoBase {
   id?: string;
   avatar: any;
@@ -110,11 +153,9 @@ export interface UserInfoBase {
   website: string;
   location: string;
   ip_info?: string;
-  /** 'forbidden' | 'normal' | 'delete'
-   */
-  status?: string;
+  status?: 'normal' | 'suspended' | 'deleted' | 'inactive';
   /** roles */
-  is_admin?: boolean;
+  role_id?: RoleId;
 }
 
 export interface UserInfoRes extends UserInfoBase {
@@ -127,8 +168,8 @@ export interface UserInfoRes extends UserInfoBase {
    */
   mail_status: number;
   language: string;
-  is_admin: boolean;
   e_mail?: string;
+  have_password: boolean;
   [prop: string]: any;
 }
 
@@ -152,9 +193,28 @@ export interface PasswordResetReq extends ImgCodeReq {
   e_mail: string;
 }
 
-export interface CheckImgReq {
-  action: 'login' | 'e_mail' | 'find_pass';
+export interface PasswordReplaceReq extends ImgCodeReq {
+  code: string;
+  pass: string;
 }
+
+export interface CaptchaReq extends ImgCodeReq {
+  verify: ImgCodeRes['verify'];
+}
+
+export type CaptchaKey =
+  | 'email'
+  | 'password'
+  | 'edit_userinfo'
+  | 'question'
+  | 'answer'
+  | 'comment'
+  | 'edit'
+  | 'invitation_answer'
+  | 'search'
+  | 'report'
+  | 'delete'
+  | 'vote';
 
 export interface SetNoticeReq {
   notice_switch: boolean;
@@ -185,12 +245,13 @@ export interface QuestionDetailRes {
   user_info: UserInfoBase;
   answered: boolean;
   collected: boolean;
+  answer_ids: string[];
 
   [prop: string]: any;
 }
 
 export interface AnswersReq extends Paging {
-  order?: 'default' | 'updated';
+  order?: 'default' | 'updated' | 'created';
   question_id: string;
 }
 
@@ -205,7 +266,7 @@ export interface AnswerItem {
   [prop: string]: any;
 }
 
-export interface PostAnswerReq {
+export interface PostAnswerReq extends ImgCodeReq {
   content: string;
   html?: string;
   question_id: string;
@@ -236,11 +297,16 @@ export type QuestionOrderBy =
 export interface QueryQuestionsReq extends Paging {
   order: QuestionOrderBy;
   tag?: string;
+  in_days?: number;
 }
 
-export type AdminQuestionStatus = 'available' | 'closed' | 'deleted';
+export type AdminQuestionStatus =
+  | 'available'
+  | 'pending'
+  | 'closed'
+  | 'deleted';
 
-export type AdminContentsFilterBy = 'normal' | 'closed' | 'deleted';
+export type AdminContentsFilterBy = 'normal' | 'pending' | 'closed' | 'deleted';
 
 export interface AdminContentsReq extends Paging {
   status: AdminContentsFilterBy;
@@ -256,12 +322,17 @@ export type AdminAnswerStatus = 'available' | 'deleted';
  * @description interface for Users
  */
 export type UserFilterBy =
-  | 'all'
+  | 'normal'
   | 'staff'
   | 'inactive'
   | 'suspended'
   | 'deleted';
 
+export type InstalledPluginsFilterBy =
+  | 'all'
+  | 'active'
+  | 'inactive'
+  | 'outdated';
 /**
  * @description interface for Flags
  */
@@ -281,6 +352,8 @@ export interface AdminSettingsGeneral {
   description: string;
   site_url: string;
   contact_email: string;
+  check_update: boolean;
+  permalink?: number;
 }
 
 export interface HelmetBase {
@@ -311,6 +384,17 @@ export interface AdminSettingsSmtp {
   test_email_recipient?: string;
 }
 
+export interface AdminSettingsUsers {
+  allow_update_avatar: boolean;
+  allow_update_bio: boolean;
+  allow_update_display_name: boolean;
+  allow_update_location: boolean;
+  allow_update_username: boolean;
+  allow_update_website: boolean;
+  default_avatar: string;
+  gravatar_base_url: string;
+}
+
 export interface SiteSettings {
   branding: AdminSettingBranding;
   general: AdminSettingsGeneral;
@@ -319,7 +403,10 @@ export interface SiteSettings {
   custom_css_html: AdminSettingsCustom;
   theme: AdminSettingsTheme;
   site_seo: AdminSettingsSeo;
+  site_users: AdminSettingsUsers;
+  site_write: AdminSettingsWrite;
   version: string;
+  revision: string;
 }
 
 export interface AdminSettingBranding {
@@ -337,9 +424,10 @@ export interface AdminSettingsLegal {
 }
 
 export interface AdminSettingsWrite {
-  recommend_tags: string[];
-  required_tag: string;
-  reserved_tags: string[];
+  restrict_answer?: boolean;
+  recommend_tags?: string[];
+  required_tag?: string;
+  reserved_tags?: string[];
 }
 
 export interface AdminSettingsSeo {
@@ -359,6 +447,7 @@ export type themeConfig = {
 };
 export interface AdminSettingsTheme {
   theme: string;
+  color_scheme: string;
   theme_options?: { label: string; value: string }[];
   theme_config: Record<string, themeConfig>;
 }
@@ -368,11 +457,15 @@ export interface AdminSettingsCustom {
   custom_head: string;
   custom_header: string;
   custom_footer: string;
+  custom_sidebar: string;
 }
 
 export interface AdminSettingsLogin {
   allow_new_registrations: boolean;
   login_required: boolean;
+  allow_email_registrations: boolean;
+  allow_email_domains: string[];
+  allow_password_login: boolean;
 }
 
 /**
@@ -386,7 +479,7 @@ export interface FollowParams {
 /**
  * @description search request params
  */
-export interface SearchParams {
+export interface SearchParams extends ImgCodeReq {
   q: string;
   order: string;
   page: number;
@@ -426,11 +519,15 @@ export interface AdminDashboard {
     user_count: number;
     report_count: number;
     uploading_files: boolean;
-    smtp: boolean;
+    smtp: 'enabled' | 'disabled' | 'not_configured';
     time_zone: string;
     occupying_storage_space: string;
     app_start_time: number;
     https: boolean;
+    login_required: boolean;
+    go_version: string;
+    database_version: string;
+    database_size: string;
     version_info: {
       remote_version: string;
       version: string;
@@ -448,13 +545,12 @@ export interface TimelineItem {
   revision_id: number;
   created_at: number;
   activity_type: string;
-  username: string;
-  user_display_name: string;
   comment: string;
   object_id: string;
   object_type: string;
   cancelled: boolean;
   cancelled_at: any;
+  user_info: UserInfoBase;
 }
 
 export interface TimelineObject {
@@ -472,7 +568,7 @@ export interface TimelineRes {
   timeline: TimelineItem[];
 }
 
-export interface ReviewItem {
+export interface SuggestReviewItem {
   type: 'question' | 'answer' | 'tag';
   info: {
     url_title?: string;
@@ -494,9 +590,60 @@ export interface ReviewItem {
     content: Tag | QuestionDetailRes | AnswerItem;
   };
 }
-export interface ReviewResp {
+export interface SuggestReviewResp {
   count: number;
-  list: ReviewItem[];
+  list: SuggestReviewItem[];
+}
+
+export interface ReasonItem {
+  content_type: string;
+  description: string;
+  name: string;
+  placeholder: string;
+  reason_type: number;
+}
+
+export interface BaseReviewItem {
+  object_type: 'question' | 'answer' | 'comment' | 'user';
+  object_id: string;
+  object_show_status: number;
+  object_status: number;
+  tags: Tag[];
+  title: string;
+  original_text: string;
+  author_user_info: UserInfoBase;
+  created_at: number;
+  submit_at: number;
+  comment_id: string;
+  question_id: string;
+  answer_id: string;
+  answer_count: number;
+  answer_accepted?: boolean;
+  flag_id: string;
+  url_title: string;
+  parsed_text: string;
+}
+
+export interface FlagReviewItem extends BaseReviewItem {
+  reason: ReasonItem;
+  reason_content: string;
+  submitter_user: UserInfoBase;
+}
+
+export interface FlagReviewResp {
+  count: number;
+  list: FlagReviewItem[];
+}
+
+export interface QueuedReviewItem extends BaseReviewItem {
+  review_id: number;
+  reason: string;
+  submitter_display_name: string;
+}
+
+export interface QueuedReviewResp {
+  count: number;
+  list: QueuedReviewItem[];
 }
 
 export interface UserRoleItem {
@@ -510,10 +657,79 @@ export interface MemberActionItem {
   type: string;
 }
 
-export interface User {
-  username: string;
-  rank: number;
-  vote_count: number;
-  display_name: string;
-  avatar: string;
+export interface QuestionOperationReq {
+  id: string;
+  operation: 'pin' | 'unpin' | 'hide' | 'show';
+}
+
+export interface OauthBindEmailReq {
+  binding_key: string;
+  email: string;
+  must: boolean;
+}
+
+export interface UserOauthConnectorItem {
+  icon: string;
+  name: string;
+  link: string;
+  binding: boolean;
+  external_id: string;
+}
+
+export interface NotificationConfigItem {
+  enable: boolean;
+  key: string;
+}
+export interface NotificationConfig {
+  all_new_question: NotificationConfigItem;
+  all_new_question_for_following_tags: NotificationConfigItem;
+  inbox: NotificationConfigItem;
+}
+
+export interface ActivatedPlugin {
+  slug_name: string;
+  enabled: boolean;
+}
+
+export interface UserPluginsConfigRes {
+  name: string;
+  slug_name: string;
+}
+
+export interface ReviewTypeItem {
+  label: string;
+  name: string;
+  todo_amount: number;
+}
+
+export interface PutFlagReviewParams {
+  operation_type:
+    | 'edit_post'
+    | 'close_post'
+    | 'delete_post'
+    | 'unlist_post'
+    | 'ignore_report';
+  flag_id: string;
+  close_msg?: string;
+  close_type?: number;
+  title?: string;
+  content?: string;
+  tags?: Tag[];
+  // mention_username_list?: any;
+  captcha_code?: any;
+  captcha_id?: any;
+}
+
+/**
+ * @description response for reaction
+ */
+export interface ReactionItems {
+  reaction_summary: ReactionItem[];
+}
+
+export interface ReactionItem {
+  emoji: string;
+  count: number;
+  tooltip: string;
+  is_active: boolean;
 }

@@ -1,13 +1,33 @@
+<!--
+
+    Licensed to the Apache Software Foundation (ASF) under one
+    or more contributor license agreements.  See the NOTICE file
+    distributed with this work for additional information
+    regarding copyright ownership.  The ASF licenses this file
+    to you under the Apache License, Version 2.0 (the
+    "License"); you may not use this file except in compliance
+    with the License.  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing,
+    software distributed under the License is distributed on an
+    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+    KIND, either express or implied.  See the License for the
+    specific language governing permissions and limitations
+    under the License.
+
+-->
 {{template "header" . }}
 <div class="pt-4 mt-2 mb-5 questionDetailPage container">
   <div class="justify-content-center row">
     <div class="mb-5 mb-md-0 col-xxl-7 col-lg-8 col-sm-12">
       <div>
         <h1 class="h3 mb-3 text-wrap text-break">
-          <a class="link-dark" href="/questions/{{.detail.ID}}">{{.detail.Title}}</a>
+          <a class="link-dark" href="{{$.baseURL}}/questions/{{.detail.ID}}">{{.detail.Title}}</a>
         </h1>
         <div
-          class="d-flex flex-wrap align-items-center fs-14 mb-3 text-secondary">
+          class="d-flex flex-wrap align-items-center small mb-3 text-secondary">
           <time class="me-3"
                 datetime="{{timeFormatISO $.timezone .detail.CreateTime}}"
                 title="{{translatorTimeFormatLongDate $.language $.timezone .detail.CreateTime}}">{{translator $.language "ui.question_detail.Asked"}} {{translatorTimeFormat $.language $.timezone .detail.CreateTime}}
@@ -21,14 +41,14 @@
         </div>
         <div class="m-n1">
           {{range .detail.Tags}}
-          <a href="/tags/{{.SlugName}}"
+          <a href="{{$.baseURL}}/tags/{{.SlugName}}"
              class="badge-tag rounded-1 {{if .Reserved}}badge-tag-reserved{{end}} {{if .Recommend}}badge-tag-required{{end}} m-1">
             <span class="">{{.SlugName}}</span>
           </a>
           {{end}}
         </div>
         <article class="fmt text-break text-wrap mt-4">
-          {{templateHTML .detail.HTML}}
+          {{formatLinkNofollow .detail.HTML}}
         </article>
         <div class="mt-4">
           <div role="group" class="btn-group">
@@ -51,8 +71,8 @@
 
           </div>
           <div class="mb-3 mb-md-0 col-lg-3">
-            <a href="/posts/{{.detail.ID}}/timeline">
-              <time class="link-secondary fs-14"
+            <a href="{{$.baseURL}}/posts/{{.detail.ID}}/timeline">
+              <time class="link-secondary small"
                     datetime="{{timeFormatISO $.timezone .detail.UpdateTime}}"
                     title="{{translatorTimeFormatLongDate $.language $.timezone .detail.UpdateTime}}">
                 {{translator $.language "ui.question_detail.edit"}} {{translatorTimeFormat $.language $.timezone .detail.UpdateTime}}
@@ -61,7 +81,7 @@
           </div>
           <div class="col-lg-3">
             <div class="d-flex">
-              <a href="/users/bmckfbksayryy"><img
+              <a href="{{$.baseURL}}/users/{{.detail.UserInfo.Username}}"><img
                 src="{{.detail.UserInfo.Avatar}}"
                 width="40px" height="40px"
                 class="rounded me-2 d-none d-md-block"
@@ -71,13 +91,13 @@
                 class="rounded me-2 d-block d-md-none"
                 alt=""/></a>
               <div
-                class="fs-14 text-secondary d-flex flex-row flex-md-column align-items-center align-items-md-start">
+                class="small text-secondary d-flex flex-row flex-md-column align-items-center align-items-md-start">
                 <div class="me-1 me-md-0">
                   <a class="me-1 text-break"
-                     href="/users/{{.detail.UserInfo.Username}}">{{.detail.UserInfo.DisplayName}}</a><span
+                     href="{{$.baseURL}}/users/{{.detail.UserInfo.Username}}">{{.detail.UserInfo.DisplayName}}</a><span
                   class="fw-bold" title="Reputation">{{.detail.UserInfo.Rank}}</span>
                 </div>
-                <a href="/posts/{{.detail.ID}}/timeline">
+                <a href="{{$.baseURL}}/posts/{{.detail.ID}}/timeline">
                   <time class="link-secondary"
                         datetime="{{timeFormatISO $.timezone .detail.CreateTime}}"
                         title="{{translatorTimeFormatLongDate $.language $.timezone .detail.CreateTime}}">{{translator $.language "ui.question_detail.asked"}} {{translatorTimeFormat $.language $.timezone .detail.CreateTime}}
@@ -98,7 +118,7 @@
       {{range .answers}}
       <div id="10020000000000930" class="answer-item py-4">
         <article class="fmt">
-          {{templateHTML .HTML}}
+          {{formatLinkNofollow .HTML}}
         </article>
         <div class="d-flex align-items-center mt-4">
           <div class="">
@@ -128,9 +148,9 @@
             </div>
           </div>
           <div class="mb-3 mb-md-0 col-lg-3">
-            <a href="/posts/{{$.detail.ID}}/{{.ID}}/timeline">
+            <a href="{{$.baseURL}}/posts/{{$.detail.ID}}/{{.ID}}/timeline">
               <time
-                class="link-secondary fs-14"
+                class="link-secondary small"
                 datetime="{{timeFormatISO $.timezone .UpdateTime}}"
                 title="{{translatorTimeFormatLongDate $.language $.timezone .UpdateTime}}">
                 {{translator $.language "ui.question_detail.edit"}} {{translatorTimeFormat $.language $.timezone .UpdateTime}}
@@ -139,7 +159,7 @@
           </div>
           <div class="col-lg-4">
             <div class="d-flex">
-              <a href="/users/bmxtgtpksxayy"><img
+              <a href="{{$.baseURL}}/users/{{.UserInfo.Username}}"><img
                 src="{{.UserInfo.Avatar}}"
                 width="40px" height="40px"
                 class="rounded me-2 d-none d-md-block"
@@ -149,13 +169,13 @@
                 class="rounded me-2 d-block d-md-none"
                 alt=""/></a>
               <div
-                class="fs-14 text-secondary d-flex flex-row flex-md-column align-items-center align-items-md-start">
+                class="small text-secondary d-flex flex-row flex-md-column align-items-center align-items-md-start">
                 <div class="me-1 me-md-0">
                   <a class="me-1 text-break"
-                     href="/users/{{.UserInfo.Username}}">{{.UserInfo.DisplayName}}</a><span
+                     href="{{$.baseURL}}/users/{{.UserInfo.Username}}">{{.UserInfo.DisplayName}}</a><span
                   class="fw-bold" title="Reputation">{{.UserInfo.Rank}}</span>
                 </div>
-                <a href="/posts/{{$.detail.ID}}/{{.ID}}/timeline">
+                <a href="{{$.baseURL}}/posts/{{$.detail.ID}}/{{.ID}}/timeline">
                   <time
                     class="link-secondary"
                     datetime="{{timeFormatISO $.timezone .CreateTime}}"
@@ -188,4 +208,3 @@
   <div class="d-flex justify-content-center"></div>
 </div>
 {{template "footer" .}}
-

@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package search_common
 
 import (
@@ -7,18 +26,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/answerdev/answer/pkg/htmltext"
+	tagcommon "github.com/apache/incubator-answer/internal/service/tag_common"
+	"github.com/apache/incubator-answer/plugin"
 
-	"github.com/answerdev/answer/internal/base/data"
-	"github.com/answerdev/answer/internal/base/reason"
-	"github.com/answerdev/answer/internal/entity"
-	"github.com/answerdev/answer/internal/schema"
-	"github.com/answerdev/answer/internal/service/search_common"
-	"github.com/answerdev/answer/internal/service/unique"
-	usercommon "github.com/answerdev/answer/internal/service/user_common"
-	"github.com/answerdev/answer/pkg/converter"
-	"github.com/answerdev/answer/pkg/obj"
-	"github.com/jinzhu/copier"
+	"github.com/apache/incubator-answer/pkg/htmltext"
+
+	"github.com/apache/incubator-answer/internal/base/data"
+	"github.com/apache/incubator-answer/internal/base/handler"
+	"github.com/apache/incubator-answer/internal/base/reason"
+	"github.com/apache/incubator-answer/internal/entity"
+	"github.com/apache/incubator-answer/internal/schema"
+	"github.com/apache/incubator-answer/internal/service/search_common"
+	"github.com/apache/incubator-answer/internal/service/unique"
+	usercommon "github.com/apache/incubator-answer/internal/service/user_common"
+	"github.com/apache/incubator-answer/pkg/converter"
+	"github.com/apache/incubator-answer/pkg/obj"
+	"github.com/apache/incubator-answer/pkg/uid"
 	"github.com/segmentfault/pacman/errors"
 	"xorm.io/builder"
 )
@@ -57,19 +80,26 @@ type searchRepo struct {
 	data         *data.Data
 	userCommon   *usercommon.UserCommon
 	uniqueIDRepo unique.UniqueIDRepo
+	tagCommon    *tagcommon.TagCommonService
 }
 
 // NewSearchRepo new repository
-func NewSearchRepo(data *data.Data, uniqueIDRepo unique.UniqueIDRepo, userCommon *usercommon.UserCommon) search_common.SearchRepo {
+func NewSearchRepo(
+	data *data.Data,
+	uniqueIDRepo unique.UniqueIDRepo,
+	userCommon *usercommon.UserCommon,
+	tagCommon *tagcommon.TagCommonService,
+) search_common.SearchRepo {
 	return &searchRepo{
 		data:         data,
 		uniqueIDRepo: uniqueIDRepo,
 		userCommon:   userCommon,
+		tagCommon:    tagCommon,
 	}
 }
 
 // SearchContents search question and answer data
-func (sr *searchRepo) SearchContents(ctx context.Context, words []string, tagIDs []string, userID string, votes int, page, size int, order string) (resp []schema.SearchResp, total int64, err error) {
+func (sr *searchRepo) SearchContents(ctx context.Context, words []string, tagIDs [][]string, userID string, votes int, page, size int, order string) (resp []*schema.SearchResult, total int64, err error) {
 	words = filterWords(words)
 
 	var (
@@ -94,49 +124,48 @@ func (sr *searchRepo) SearchContents(ctx context.Context, words []string, tagIDs
 	ub = builder.MySQL().Select(afs...).From("`answer`").
 		LeftJoin("`question`", "`question`.id = `answer`.question_id")
 
-	b.Where(builder.Lt{"`question`.`status`": entity.QuestionStatusDeleted})
+	b.Where(builder.Lt{"`question`.`status`": entity.QuestionStatusDeleted}).
+		And(builder.Eq{"`question`.`show`": entity.QuestionShow})
 	ub.Where(builder.Lt{"`question`.`status`": entity.QuestionStatusDeleted}).
-		And(builder.Lt{"`answer`.`status`": entity.AnswerStatusDeleted})
+		And(builder.Lt{"`answer`.`status`": entity.AnswerStatusDeleted}).
+		And(builder.Eq{"`question`.`show`": entity.QuestionShow})
 
-	argsQ = append(argsQ, entity.QuestionStatusDeleted)
-	argsA = append(argsA, entity.QuestionStatusDeleted, entity.AnswerStatusDeleted)
+	argsQ = append(argsQ, entity.QuestionStatusDeleted, entity.QuestionShow)
+	argsA = append(argsA, entity.QuestionStatusDeleted, entity.AnswerStatusDeleted, entity.QuestionShow)
 
-	for i, word := range words {
-		if i == 0 {
-			b.Where(builder.Like{"title", word}).
-				Or(builder.Like{"original_text", word})
-			argsQ = append(argsQ, "%"+word+"%")
-			argsQ = append(argsQ, "%"+word+"%")
+	likeConQ := builder.NewCond()
+	likeConA := builder.NewCond()
+	for _, word := range words {
+		likeConQ = likeConQ.Or(builder.Like{"title", word}).
+			Or(builder.Like{"original_text", word})
+		argsQ = append(argsQ, "%"+word+"%")
+		argsQ = append(argsQ, "%"+word+"%")
 
-			ub.Where(builder.Like{"`answer`.original_text", word})
-			argsA = append(argsA, "%"+word+"%")
-		} else {
-			b.Or(builder.Like{"title", word}).
-				Or(builder.Like{"original_text", word})
-			argsQ = append(argsQ, "%"+word+"%")
-			argsQ = append(argsQ, "%"+word+"%")
-
-			ub.Or(builder.Like{"`answer`.original_text", word})
-			argsA = append(argsA, "%"+word+"%")
-		}
+		likeConA = likeConA.Or(builder.Like{"`answer`.original_text", word})
+		argsA = append(argsA, "%"+word+"%")
 	}
 
+	b.Where(likeConQ)
+	ub.Where(likeConA)
+
 	// check tag
-	if len(tagIDs) > 0 {
-		for ti, tagID := range tagIDs {
-			ast := "tag_rel" + strconv.Itoa(ti)
-			b.Join("INNER", "tag_rel as "+ast, "question.id = "+ast+".object_id").
-				And(builder.Eq{
-					ast + ".tag_id": tagID,
-					ast + ".status": entity.TagRelStatusAvailable,
-				})
-			ub.Join("INNER", "tag_rel as "+ast, "question_id = "+ast+".object_id").
-				And(builder.Eq{
-					ast + ".tag_id": tagID,
-					ast + ".status": entity.TagRelStatusAvailable,
-				})
-			argsQ = append(argsQ, entity.TagRelStatusAvailable, tagID)
-			argsA = append(argsA, entity.TagRelStatusAvailable, tagID)
+	for ti, tagID := range tagIDs {
+		ast := "tag_rel" + strconv.Itoa(ti)
+		b.Join("INNER", "tag_rel as "+ast, "question.id = "+ast+".object_id").
+			And(builder.Eq{
+				ast + ".status": entity.TagRelStatusAvailable,
+			}).
+			And(builder.In(ast+".tag_id", tagID))
+		ub.Join("INNER", "tag_rel as "+ast, "question_id = "+ast+".object_id").
+			And(builder.Eq{
+				ast + ".status": entity.TagRelStatusAvailable,
+			}).
+			And(builder.In(ast+".tag_id", tagID))
+		argsQ = append(argsQ, entity.TagRelStatusAvailable)
+		argsA = append(argsA, entity.TagRelStatusAvailable)
+		for _, t := range tagID {
+			argsQ = append(argsQ, t)
+			argsA = append(argsA, t)
 		}
 	}
 
@@ -193,12 +222,12 @@ func (sr *searchRepo) SearchContents(ctx context.Context, words []string, tagIDs
 	countArgs = append(countArgs, argsQ...)
 	countArgs = append(countArgs, argsA...)
 
-	res, err := sr.data.DB.Query(queryArgs...)
+	res, err := sr.data.DB.Context(ctx).Query(queryArgs...)
 	if err != nil {
 		return
 	}
 
-	tr, err := sr.data.DB.Query(countArgs...)
+	tr, err := sr.data.DB.Context(ctx).Query(countArgs...)
 	if len(tr) != 0 {
 		total = converter.StringToInt64(string(tr[0]["total"]))
 	}
@@ -206,13 +235,13 @@ func (sr *searchRepo) SearchContents(ctx context.Context, words []string, tagIDs
 		err = errors.InternalServer(reason.DatabaseError).WithError(err).WithStack()
 		return
 	} else {
-		resp, err = sr.parseResult(ctx, res)
+		resp, err = sr.parseResult(ctx, res, words)
 		return
 	}
 }
 
 // SearchQuestions search question data
-func (sr *searchRepo) SearchQuestions(ctx context.Context, words []string, tagIDs []string, notAccepted bool, views, answers int, page, size int, order string) (resp []schema.SearchResp, total int64, err error) {
+func (sr *searchRepo) SearchQuestions(ctx context.Context, words []string, tagIDs [][]string, notAccepted bool, views, answers int, page, size int, order string) (resp []*schema.SearchResult, total int64, err error) {
 	words = filterWords(words)
 	var (
 		qfs  = qFields
@@ -228,31 +257,29 @@ func (sr *searchRepo) SearchQuestions(ctx context.Context, words []string, tagID
 
 	b := builder.MySQL().Select(qfs...).From("question")
 
-	b.Where(builder.Lt{"`question`.`status`": entity.QuestionStatusDeleted})
-	args = append(args, entity.QuestionStatusDeleted)
+	b.Where(builder.Lt{"`question`.`status`": entity.QuestionStatusDeleted}).And(builder.Eq{"`question`.`show`": entity.QuestionShow})
+	args = append(args, entity.QuestionStatusDeleted, entity.QuestionShow)
 
-	for i, word := range words {
-		if i == 0 {
-			b.Where(builder.Like{"title", word}).
-				Or(builder.Like{"original_text", word})
-			args = append(args, "%"+word+"%")
-			args = append(args, "%"+word+"%")
-		} else {
-			b.Or(builder.Like{"original_text", word})
-			args = append(args, "%"+word+"%")
-		}
+	likeConQ := builder.NewCond()
+	for _, word := range words {
+		likeConQ = likeConQ.Or(builder.Like{"title", word}).
+			Or(builder.Like{"original_text", word})
+		args = append(args, "%"+word+"%")
+		args = append(args, "%"+word+"%")
 	}
+	b.Where(likeConQ)
 
 	// check tag
-	if len(tagIDs) > 0 {
-		for ti, tagID := range tagIDs {
-			ast := "tag_rel" + strconv.Itoa(ti)
-			b.Join("INNER", "tag_rel as "+ast, "question.id = "+ast+".object_id").
-				And(builder.Eq{
-					ast + ".tag_id": tagID,
-					ast + ".status": entity.TagRelStatusAvailable,
-				})
-			args = append(args, entity.TagRelStatusAvailable, tagID)
+	for ti, tagID := range tagIDs {
+		ast := "tag_rel" + strconv.Itoa(ti)
+		b.Join("INNER", "tag_rel as "+ast, "question.id = "+ast+".object_id").
+			And(builder.Eq{
+				ast + ".status": entity.TagRelStatusAvailable,
+			}).
+			And(builder.In(ast+".tag_id", tagID))
+		args = append(args, entity.TagRelStatusAvailable)
+		for _, t := range tagID {
+			args = append(args, t)
 		}
 	}
 
@@ -303,12 +330,12 @@ func (sr *searchRepo) SearchQuestions(ctx context.Context, words []string, tagID
 	countArgs = append(countArgs, countSQL)
 	countArgs = append(countArgs, args...)
 
-	res, err := sr.data.DB.Query(queryArgs...)
+	res, err := sr.data.DB.Context(ctx).Query(queryArgs...)
 	if err != nil {
 		return
 	}
 
-	tr, err := sr.data.DB.Query(countArgs...)
+	tr, err := sr.data.DB.Context(ctx).Query(countArgs...)
 	if err != nil {
 		return
 	}
@@ -316,7 +343,7 @@ func (sr *searchRepo) SearchQuestions(ctx context.Context, words []string, tagID
 	if len(tr) != 0 {
 		total = converter.StringToInt64(string(tr[0]["total"]))
 	}
-	resp, err = sr.parseResult(ctx, res)
+	resp, err = sr.parseResult(ctx, res, words)
 	if err != nil {
 		err = errors.InternalServer(reason.DatabaseError).WithError(err).WithStack()
 	}
@@ -324,7 +351,7 @@ func (sr *searchRepo) SearchQuestions(ctx context.Context, words []string, tagID
 }
 
 // SearchAnswers search answer data
-func (sr *searchRepo) SearchAnswers(ctx context.Context, words []string, tagIDs []string, accepted bool, questionID string, page, size int, order string) (resp []schema.SearchResp, total int64, err error) {
+func (sr *searchRepo) SearchAnswers(ctx context.Context, words []string, tagIDs [][]string, accepted bool, questionID string, page, size int, order string) (resp []*schema.SearchResult, total int64, err error) {
 	words = filterWords(words)
 
 	var (
@@ -343,29 +370,28 @@ func (sr *searchRepo) SearchAnswers(ctx context.Context, words []string, tagIDs 
 		LeftJoin("`question`", "`question`.id = `answer`.question_id")
 
 	b.Where(builder.Lt{"`question`.`status`": entity.QuestionStatusDeleted}).
-		And(builder.Lt{"`answer`.`status`": entity.AnswerStatusDeleted})
-	args = append(args, entity.QuestionStatusDeleted, entity.AnswerStatusDeleted)
+		And(builder.Lt{"`answer`.`status`": entity.AnswerStatusDeleted}).And(builder.Eq{"`question`.`show`": entity.QuestionShow})
+	args = append(args, entity.QuestionStatusDeleted, entity.AnswerStatusDeleted, entity.QuestionShow)
 
-	for i, word := range words {
-		if i == 0 {
-			b.Where(builder.Like{"`answer`.original_text", word})
-			args = append(args, "%"+word+"%")
-		} else {
-			b.Or(builder.Like{"`answer`.original_text", word})
-			args = append(args, "%"+word+"%")
-		}
+	likeConA := builder.NewCond()
+	for _, word := range words {
+		likeConA = likeConA.Or(builder.Like{"`answer`.original_text", word})
+		args = append(args, "%"+word+"%")
 	}
 
+	b.Where(likeConA)
+
 	// check tag
-	if len(tagIDs) > 0 {
-		for ti, tagID := range tagIDs {
-			ast := "tag_rel" + strconv.Itoa(ti)
-			b.Join("INNER", "tag_rel as "+ast, "question_id = "+ast+".object_id").
-				And(builder.Eq{
-					ast + ".tag_id": tagID,
-					ast + ".status": entity.TagRelStatusAvailable,
-				})
-			args = append(args, entity.TagRelStatusAvailable, tagID)
+	for ti, tagID := range tagIDs {
+		ast := "tag_rel" + strconv.Itoa(ti)
+		b.Join("INNER", "tag_rel as "+ast, "question_id = "+ast+".object_id").
+			And(builder.Eq{
+				ast + ".status": entity.TagRelStatusAvailable,
+			}).
+			And(builder.In(ast+".tag_id", tagID))
+		args = append(args, entity.TagRelStatusAvailable)
+		for _, t := range tagID {
+			args = append(args, t)
 		}
 	}
 
@@ -400,18 +426,18 @@ func (sr *searchRepo) SearchAnswers(ctx context.Context, words []string, tagIDs 
 	countArgs = append(countArgs, countSQL)
 	countArgs = append(countArgs, args...)
 
-	res, err := sr.data.DB.Query(queryArgs...)
+	res, err := sr.data.DB.Context(ctx).Query(queryArgs...)
 	if err != nil {
 		return
 	}
 
-	tr, err := sr.data.DB.Query(countArgs...)
+	tr, err := sr.data.DB.Context(ctx).Query(countArgs...)
 	if err != nil {
 		return
 	}
 
 	total = converter.StringToInt64(string(tr[0]["total"]))
-	resp, err = sr.parseResult(ctx, res)
+	resp, err = sr.parseResult(ctx, res, words)
 	if err != nil {
 		err = errors.InternalServer(reason.DatabaseError).WithError(err).WithStack()
 	}
@@ -434,82 +460,116 @@ func (sr *searchRepo) parseOrder(ctx context.Context, order string) (res string)
 	return
 }
 
-func (sr *searchRepo) parseResult(ctx context.Context, res []map[string][]byte) (resp []schema.SearchResp, err error) {
-	for _, r := range res {
-		var (
-			objectKey,
-			status string
+// ParseSearchPluginResult parse search plugin result
+func (sr *searchRepo) ParseSearchPluginResult(ctx context.Context, sres []plugin.SearchResult, words []string) (resp []*schema.SearchResult, err error) {
+	var (
+		qres []map[string][]byte
+		res  = make([]map[string][]byte, 0)
+		b    *builder.Builder
+	)
+	for _, r := range sres {
+		switch r.Type {
+		case "question":
+			b = builder.MySQL().Select(qFields...).From("question").Where(builder.Eq{"id": r.ID}).
+				And(builder.Lt{"`status`": entity.QuestionStatusDeleted})
+		case "answer":
+			b = builder.MySQL().Select(aFields...).From("answer").LeftJoin("`question`", "`question`.`id` = `answer`.`question_id`").
+				Where(builder.Eq{"`answer`.`id`": r.ID}).
+				And(builder.Lt{"`question`.`status`": entity.QuestionStatusDeleted}).
+				And(builder.Lt{"`answer`.`status`": entity.AnswerStatusDeleted}).And(builder.Eq{"`question`.`show`": entity.QuestionShow})
+		}
+		qres, err = sr.data.DB.Context(ctx).Query(b)
+		if err != nil || len(qres) == 0 {
+			continue
+		}
+		res = append(res, qres[0])
+	}
+	return sr.parseResult(ctx, res, words)
+}
 
-			tags       []schema.TagResp
-			tagsEntity []entity.Tag
-			object     schema.SearchObject
-		)
-		objectKey, err = obj.GetObjectTypeStrByObjectID(string(r["id"]))
+// parseResult parse search result, return the data structure
+func (sr *searchRepo) parseResult(ctx context.Context, res []map[string][]byte, words []string) (resp []*schema.SearchResult, err error) {
+	questionIDs := make([]string, 0)
+	userIDs := make([]string, 0)
+	resultList := make([]*schema.SearchResult, 0)
+	for _, r := range res {
+		questionIDs = append(questionIDs, string(r["question_id"]))
+		userIDs = append(userIDs, string(r["user_id"]))
+		tp, _ := time.ParseInLocation("2006-01-02 15:04:05", string(r["created_at"]), time.Local)
+
+		var ID = string(r["id"])
+		var QuestionID = string(r["question_id"])
+		if handler.GetEnableShortID(ctx) {
+			ID = uid.EnShortID(ID)
+			QuestionID = uid.EnShortID(QuestionID)
+		}
+
+		object := &schema.SearchObject{
+			ID:              ID,
+			QuestionID:      QuestionID,
+			Title:           string(r["title"]),
+			UrlTitle:        htmltext.UrlTitle(string(r["title"])),
+			Excerpt:         htmltext.FetchMatchedExcerpt(string(r["parsed_text"]), words, "...", 100),
+			CreatedAtParsed: tp.Unix(),
+			UserInfo: &schema.SearchObjectUser{
+				ID: string(r["user_id"]),
+			},
+			Tags:        make([]*schema.TagResp, 0),
+			VoteCount:   converter.StringToInt(string(r["vote_count"])),
+			Accepted:    string(r["accepted"]) == "2",
+			AnswerCount: converter.StringToInt(string(r["answer_count"])),
+		}
+
+		objectKey, err := obj.GetObjectTypeStrByObjectID(string(r["id"]))
 		if err != nil {
 			continue
 		}
 
-		tp, _ := time.ParseInLocation("2006-01-02 15:04:05", string(r["created_at"]), time.Local)
-
-		// get user info
-		userInfo, _, e := sr.userCommon.GetUserBasicInfoByID(ctx, string(r["user_id"]))
-		if e != nil {
-			err = errors.InternalServer(reason.DatabaseError).WithError(e).WithStack()
-			return
-		}
-
-		// get tags
-		err = sr.data.DB.
-			Select("`display_name`,`slug_name`,`main_tag_slug_name`,`recommend`,`reserved`").
-			Table("tag").
-			Join("INNER", "tag_rel", "tag.id = tag_rel.tag_id").
-			Where(builder.Eq{"tag_rel.object_id": r["question_id"]}).
-			And(builder.Eq{"tag_rel.status": entity.TagRelStatusAvailable}).
-			UseBool("recommend", "reserved").
-			OrderBy("tag.recommend DESC, tag.reserved DESC, tag.id DESC").
-			Find(&tagsEntity)
-
-		if err != nil {
-			err = errors.InternalServer(reason.DatabaseError).WithError(err).WithStack()
-			return
-		}
-		_ = copier.Copy(&tags, tagsEntity)
 		switch objectKey {
 		case "question":
 			for k, v := range entity.AdminQuestionSearchStatus {
 				if v == converter.StringToInt(string(r["status"])) {
-					status = k
+					object.StatusStr = k
 					break
 				}
 			}
 		case "answer":
 			for k, v := range entity.AdminAnswerSearchStatus {
 				if v == converter.StringToInt(string(r["status"])) {
-					status = k
+					object.StatusStr = k
 					break
 				}
 			}
 		}
 
-		object = schema.SearchObject{
-			ID:              string(r["id"]),
-			QuestionID:      string(r["question_id"]),
-			Title:           string(r["title"]),
-			Excerpt:         htmltext.FetchExcerpt(string(r["parsed_text"]), "...", 240),
-			CreatedAtParsed: tp.Unix(),
-			UserInfo:        userInfo,
-			Tags:            tags,
-			VoteCount:       converter.StringToInt(string(r["vote_count"])),
-			Accepted:        string(r["accepted"]) == "2",
-			AnswerCount:     converter.StringToInt(string(r["answer_count"])),
-			StatusStr:       status,
-		}
-		resp = append(resp, schema.SearchResp{
+		resultList = append(resultList, &schema.SearchResult{
 			ObjectType: objectKey,
 			Object:     object,
 		})
 	}
-	return
+
+	tagsMap, err := sr.tagCommon.BatchGetObjectTag(ctx, questionIDs)
+	if err != nil {
+		return nil, err
+	}
+	userInfoMap, err := sr.userCommon.BatchUserBasicInfoByID(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, item := range resultList {
+		tags, ok := tagsMap[item.Object.QuestionID]
+		if ok {
+			item.Object.Tags = tags
+		}
+		if userInfo := userInfoMap[item.Object.UserInfo.ID]; userInfo != nil {
+			item.Object.UserInfo.Username = userInfo.Username
+			item.Object.UserInfo.DisplayName = userInfo.DisplayName
+			item.Object.UserInfo.Rank = userInfo.Rank
+			item.Object.UserInfo.Status = userInfo.Status
+		}
+	}
+	return resultList, nil
 }
 
 func addRelevanceField(searchFields, words, fields []string) (res []string, args []interface{}) {

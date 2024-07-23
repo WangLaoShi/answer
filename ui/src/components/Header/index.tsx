@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 import { FC, memo, useState, useEffect } from 'react';
 import {
   Navbar,
@@ -5,13 +24,11 @@ import {
   Nav,
   Form,
   FormControl,
-  Button,
   Col,
 } from 'react-bootstrap';
 import { useTranslation } from 'react-i18next';
 import {
   useSearchParams,
-  NavLink,
   Link,
   useNavigate,
   useLocation,
@@ -20,13 +37,14 @@ import {
 
 import classnames from 'classnames';
 
-import { floppyNavigation } from '@/utils';
+import { userCenter, floppyNavigation } from '@/utils';
 import {
   loggedUserInfoStore,
   siteInfoStore,
   brandingStore,
   loginSettingStore,
   themeSettingStore,
+  sideNavStore,
 } from '@/stores';
 import { logout, useQueryNotificationStatus } from '@/services';
 
@@ -45,12 +63,23 @@ const Header: FC = () => {
   const siteInfo = siteInfoStore((state) => state.siteInfo);
   const brandingInfo = brandingStore((state) => state.branding);
   const loginSetting = loginSettingStore((state) => state.login);
+  const { updateReview, updateVisible } = sideNavStore();
   const { data: redDot } = useQueryNotificationStatus();
+  /**
+   * Automatically append `tag` information when creating a question
+   */
   const tagMatch = useMatch('/tags/:slugName');
   let askUrl = '/questions/ask';
   if (tagMatch && tagMatch.params.slugName) {
-    askUrl = `${askUrl}?tags=${tagMatch.params.slugName}`;
+    askUrl = `${askUrl}?tags=${encodeURIComponent(tagMatch.params.slugName)}`;
   }
+
+  useEffect(() => {
+    updateReview({
+      can_revision: Boolean(redDot?.can_revision),
+      revision: Number(redDot?.revision),
+    });
+  }, [redDot]);
 
   const handleInput = (val) => {
     setSearch(val);
@@ -64,20 +93,15 @@ const Header: FC = () => {
     navigate(searchUrl);
   };
 
-  const handleLogout = async () => {
+  const handleLogout = async (evt) => {
+    evt.preventDefault();
     await logout();
     clearUserStore();
     window.location.replace(window.location.href);
   };
-  const onLoginClick = (evt) => {
-    evt.preventDefault();
-    floppyNavigation.navigateToLogin((loginPath) => {
-      navigate(loginPath, { replace: true });
-    });
-  };
 
   useEffect(() => {
-    if (q) {
+    if (q && location.pathname === '/search') {
       handleInput(q);
     }
   }, [q]);
@@ -89,6 +113,11 @@ const Header: FC = () => {
       if (toggle) {
         toggle?.click();
       }
+    }
+
+    // clear search input when navigate to other page
+    if (location.pathname !== '/search' && searchStr) {
+      setSearch('');
     }
   }, [location.pathname]);
 
@@ -109,22 +138,25 @@ const Header: FC = () => {
           aria-controls="navBarContent"
           className="answer-navBar me-2"
           id="navBarToggle"
+          onClick={() => {
+            updateVisible();
+          }}
         />
 
         <div className="d-flex justify-content-between align-items-center nav-grow flex-nowrap">
-          <Navbar.Brand to="/" as={Link} className="lh-1 me-0 me-sm-3">
+          <Navbar.Brand to="/" as={Link} className="lh-1 me-0 me-sm-5 p-0">
             {brandingInfo.logo ? (
               <>
                 <img
-                  className="d-none d-lg-block logo rounded-1 me-0"
+                  className="d-none d-lg-block logo me-0"
                   src={brandingInfo.logo}
-                  alt=""
+                  alt={siteInfo.name}
                 />
 
                 <img
-                  className="lg-none logo rounded-1 me-0"
+                  className="lg-none logo me-0"
                   src={brandingInfo.mobile_logo || brandingInfo.logo}
-                  alt=""
+                  alt={siteInfo.name}
                 />
               </>
             ) : (
@@ -135,27 +167,33 @@ const Header: FC = () => {
           {/* mobile nav */}
           <div className="d-flex lg-none align-items-center flex-lg-nowrap">
             {user?.username ? (
-              <NavItems redDot={redDot} userInfo={user} logOut={handleLogout} />
+              <NavItems
+                redDot={redDot}
+                userInfo={user}
+                logOut={(e) => handleLogout(e)}
+              />
             ) : (
               <>
-                <Button
-                  variant="link"
-                  className={classnames('me-2', {
+                <Link
+                  className={classnames('me-2 btn btn-link', {
                     'link-light': navbarStyle === 'theme-colored',
                     'link-primary': navbarStyle !== 'theme-colored',
                   })}
-                  onClick={onLoginClick}
-                  href="/users/login">
+                  onClick={() => floppyNavigation.storageLoginRedirect()}
+                  to={userCenter.getLoginUrl()}>
                   {t('btns.login')}
-                </Button>
+                </Link>
                 {loginSetting.allow_new_registrations && (
-                  <Button
-                    variant={
-                      navbarStyle === 'theme-colored' ? 'light' : 'primary'
-                    }
-                    href="/users/register">
+                  <Link
+                    className={classnames(
+                      'btn',
+                      navbarStyle === 'theme-colored'
+                        ? 'btn-light'
+                        : 'btn-primary',
+                    )}
+                    to={userCenter.getSignUpUrl()}>
                     {t('btns.signup')}
-                  </Button>
+                  </Link>
                 )}
               </>
             )}
@@ -163,28 +201,14 @@ const Header: FC = () => {
         </div>
 
         <Navbar.Collapse id="navBarContent" className="me-auto">
-          <hr className="hr lg-none mb-2" style={{ marginTop: '12px' }} />
-          <Col md={4}>
-            <Nav>
-              <NavLink className="nav-link" to="/questions">
-                {t('header.nav.question')}
-              </NavLink>
-              <NavLink className="nav-link" to="/tags">
-                {t('header.nav.tag')}
-              </NavLink>
-              <NavLink className="nav-link" to="/users">
-                {t('header.nav.user')}
-              </NavLink>
-            </Nav>
-          </Col>
-          <hr className="hr lg-none mt-2" />
-
-          <Col lg={4} className="d-flex justify-content-center">
+          <hr className="hr lg-none mb-3" style={{ marginTop: '12px' }} />
+          <Col lg={8} className="ps-0">
             <Form
               action="/search"
-              className="w-75 px-0 px-lg-2"
+              className="w-100 maxw-400"
               onSubmit={handleSearch}>
               <FormControl
+                type="search"
                 placeholder={t('header.search.placeholder')}
                 className="placeholder-search"
                 value={searchStr}
@@ -226,24 +250,26 @@ const Header: FC = () => {
               </Nav>
             ) : (
               <>
-                <Button
-                  variant="link"
-                  className={classnames('me-2', {
+                <Link
+                  className={classnames('me-2 btn btn-link', {
                     'link-light': navbarStyle === 'theme-colored',
                     'link-primary': navbarStyle !== 'theme-colored',
                   })}
-                  onClick={onLoginClick}
-                  href="/users/login">
+                  onClick={() => floppyNavigation.storageLoginRedirect()}
+                  to={userCenter.getLoginUrl()}>
                   {t('btns.login')}
-                </Button>
+                </Link>
                 {loginSetting.allow_new_registrations && (
-                  <Button
-                    variant={
-                      navbarStyle === 'theme-colored' ? 'light' : 'primary'
-                    }
-                    href="/users/register">
+                  <Link
+                    className={classnames(
+                      'btn',
+                      navbarStyle === 'theme-colored'
+                        ? 'btn-light'
+                        : 'btn-primary',
+                    )}
+                    to={userCenter.getSignUpUrl()}>
                     {t('btns.signup')}
-                  </Button>
+                  </Link>
                 )}
               </>
             )}

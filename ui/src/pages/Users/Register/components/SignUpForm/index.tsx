@@ -1,19 +1,33 @@
-import React, { FormEvent, MouseEvent, useEffect, useState } from 'react';
-import { Form, Button, Col } from 'react-bootstrap';
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import React, { FormEvent, useState } from 'react';
+import { Form, Button } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { Trans, useTranslation } from 'react-i18next';
 
-import { PicAuthCodeModal } from '@/components/Modal';
-import { ImgCodeRes } from '@/common/interface';
+import { useCaptchaPlugin } from '@/utils/pluginKit';
 import type { FormDataType, RegisterReqParams } from '@/common/interface';
-import {
-  register,
-  getRegisterCaptcha,
-  useLegalTos,
-  useLegalPrivacy,
-} from '@/services';
-import userStore from '@/stores/userInfo';
-import { handleFormError } from '@/utils';
+import { register } from '@/services';
+import userStore from '@/stores/loggedUserInfo';
+import { handleFormError, scrollToElementTop } from '@/utils';
+import { useLegalClick } from '@/behaviour/useLegalClick';
 
 interface Props {
   callback: () => void;
@@ -37,25 +51,12 @@ const Index: React.FC<Props> = ({ callback }) => {
       isInvalid: false,
       errorMsg: '',
     },
-    captcha_code: {
-      value: '',
-      isInvalid: false,
-      errorMsg: '',
-    },
   });
-  const updateUser = userStore((state) => state.update);
 
-  const [imgCode, setImgCode] = useState<ImgCodeRes>({
-    captcha_id: '',
-    captcha_img: '',
-    verify: false,
-  });
-  const [showModal, setModalState] = useState(false);
-  const getImgCode = () => {
-    getRegisterCaptcha().then((res) => {
-      setImgCode(res);
-    });
-  };
+  const updateUser = userStore((state) => state.update);
+  const emailCaptcha = useCaptchaPlugin('email');
+  const nameRegex = /^[\w.-\s]{4,30}$/;
+
   const handleChange = (params: FormDataType) => {
     setFormData({ ...formData, ...params });
   };
@@ -63,6 +64,7 @@ const Index: React.FC<Props> = ({ callback }) => {
   const checkValidated = (): boolean => {
     let bol = true;
     const { name, e_mail, pass } = formData;
+
     if (!name.value) {
       bol = false;
       formData.name = {
@@ -70,12 +72,19 @@ const Index: React.FC<Props> = ({ callback }) => {
         isInvalid: true,
         errorMsg: t('name.msg.empty'),
       };
-    } else if ([...name.value].length > 30) {
+    } else if (name.value.length < 4 || name.value.length > 30) {
       bol = false;
       formData.name = {
         value: name.value,
         isInvalid: true,
         errorMsg: t('name.msg.range'),
+      };
+    } else if (!nameRegex.test(name.value)) {
+      bol = false;
+      formData.name = {
+        value: name.value,
+        isInvalid: true,
+        errorMsg: t('name.msg.character'),
       };
     }
 
@@ -99,28 +108,17 @@ const Index: React.FC<Props> = ({ callback }) => {
     setFormData({
       ...formData,
     });
+    if (!bol) {
+      const errObj = Object.keys(formData).filter(
+        (key) => formData[key].isInvalid,
+      );
+      const ele = document.getElementById(errObj[0]);
+      scrollToElementTop(ele);
+    }
     return bol;
   };
-  const { data: tos } = useLegalTos();
-  const { data: privacy } = useLegalPrivacy();
-  const argumentClick = (evt: MouseEvent, type: 'tos' | 'privacy') => {
-    evt.stopPropagation();
-    const contentText =
-      type === 'tos'
-        ? tos?.terms_of_service_original_text
-        : privacy?.privacy_policy_original_text;
-    let matchUrl: URL | undefined;
-    try {
-      if (contentText) {
-        matchUrl = new URL(contentText);
-      }
-      // eslint-disable-next-line no-empty
-    } catch (ex) {}
-    if (matchUrl) {
-      evt.preventDefault();
-      window.open(matchUrl.toString());
-    }
-  };
+
+  const legalClick = useLegalClick();
 
   const handleRegister = (event?: any) => {
     if (event) {
@@ -132,23 +130,25 @@ const Index: React.FC<Props> = ({ callback }) => {
       pass: formData.pass.value,
     };
 
-    if (imgCode.verify) {
-      reqParams.captcha_code = formData.captcha_code.value;
-      reqParams.captcha_id = imgCode.captcha_id;
+    const captcha = emailCaptcha?.getCaptcha();
+    if (captcha?.verify) {
+      reqParams.captcha_code = captcha.captcha_code;
+      reqParams.captcha_id = captcha.captcha_id;
     }
+
     register(reqParams)
-      .then((res) => {
+      .then(async (res) => {
+        await emailCaptcha?.close();
         updateUser(res);
-        setModalState(false);
         callback();
       })
       .catch((err) => {
         if (err.isError) {
+          emailCaptcha?.handleCaptchaError(err.list);
           const data = handleFormError(err, formData);
-          if (!err.list.find((v) => v.error_field.indexOf('captcha') >= 0)) {
-            setModalState(false);
-          }
           setFormData({ ...data });
+          const ele = document.getElementById(err.list[0].error_field);
+          scrollToElementTop(ele);
         }
       });
   };
@@ -159,134 +159,115 @@ const Index: React.FC<Props> = ({ callback }) => {
     if (!checkValidated()) {
       return;
     }
-    if (imgCode.verify) {
-      setModalState(true);
+    if (!emailCaptcha) {
+      handleRegister();
       return;
     }
-    handleRegister();
+    emailCaptcha.check(() => {
+      handleRegister();
+    });
   };
-  useEffect(() => {
-    getImgCode();
-  }, []);
+
   return (
     <>
-      <Col className="mx-auto" md={3}>
-        <Form noValidate onSubmit={handleSubmit} autoComplete="off">
-          <Form.Group controlId="name" className="mb-3">
-            <Form.Label>{t('name.label')}</Form.Label>
-            <Form.Control
-              autoComplete="off"
-              required
-              type="text"
-              isInvalid={formData.name.isInvalid}
-              value={formData.name.value}
-              onChange={(e) =>
-                handleChange({
-                  name: {
-                    value: e.target.value,
-                    isInvalid: false,
-                    errorMsg: '',
-                  },
-                })
-              }
-            />
-            <Form.Control.Feedback type="invalid">
-              {formData.name.errorMsg}
-            </Form.Control.Feedback>
-          </Form.Group>
-          <Form.Group controlId="email" className="mb-3">
-            <Form.Label>{t('email.label')}</Form.Label>
-            <Form.Control
-              autoComplete="off"
-              required
-              type="e_mail"
-              isInvalid={formData.e_mail.isInvalid}
-              value={formData.e_mail.value}
-              onChange={(e) =>
-                handleChange({
-                  e_mail: {
-                    value: e.target.value,
-                    isInvalid: false,
-                    errorMsg: '',
-                  },
-                })
-              }
-            />
-            <Form.Control.Feedback type="invalid">
-              {formData.e_mail.errorMsg}
-            </Form.Control.Feedback>
-          </Form.Group>
+      <Form noValidate onSubmit={handleSubmit} autoComplete="off">
+        <Form.Group controlId="name" className="mb-3">
+          <Form.Label>{t('name.label')}</Form.Label>
+          <Form.Control
+            autoComplete="off"
+            required
+            type="text"
+            isInvalid={formData.name.isInvalid}
+            value={formData.name.value}
+            onChange={(e) =>
+              handleChange({
+                name: {
+                  value: e.target.value,
+                  isInvalid: false,
+                  errorMsg: '',
+                },
+              })
+            }
+          />
+          <Form.Control.Feedback type="invalid">
+            {formData.name.errorMsg}
+          </Form.Control.Feedback>
+        </Form.Group>
+        <Form.Group controlId="email" className="mb-3">
+          <Form.Label>{t('email.label')}</Form.Label>
+          <Form.Control
+            autoComplete="off"
+            required
+            type="e_mail"
+            isInvalid={formData.e_mail.isInvalid}
+            value={formData.e_mail.value}
+            onChange={(e) =>
+              handleChange({
+                e_mail: {
+                  value: e.target.value,
+                  isInvalid: false,
+                  errorMsg: '',
+                },
+              })
+            }
+          />
+          <Form.Control.Feedback type="invalid">
+            {formData.e_mail.errorMsg}
+          </Form.Control.Feedback>
+        </Form.Group>
 
-          <Form.Group controlId="password" className="mb-3">
-            <Form.Label>{t('password.label')}</Form.Label>
-            <Form.Control
-              autoComplete="off"
-              required
-              type="password"
-              maxLength={32}
-              isInvalid={formData.pass.isInvalid}
-              value={formData.pass.value}
-              onChange={(e) =>
-                handleChange({
-                  pass: {
-                    value: e.target.value,
-                    isInvalid: false,
-                    errorMsg: '',
-                  },
-                })
-              }
-            />
-            <Form.Control.Feedback type="invalid">
-              {formData.pass.errorMsg}
-            </Form.Control.Feedback>
-          </Form.Group>
+        <Form.Group controlId="password" className="mb-3">
+          <Form.Label>{t('password.label')}</Form.Label>
+          <Form.Control
+            autoComplete="off"
+            required
+            type="password"
+            isInvalid={formData.pass.isInvalid}
+            value={formData.pass.value}
+            onChange={(e) =>
+              handleChange({
+                pass: {
+                  value: e.target.value,
+                  isInvalid: false,
+                  errorMsg: '',
+                },
+              })
+            }
+          />
+          <Form.Control.Feedback type="invalid">
+            {formData.pass.errorMsg}
+          </Form.Control.Feedback>
+        </Form.Group>
 
-          <div className="d-grid">
-            <Button variant="primary" type="submit">
-              {t('signup', { keyPrefix: 'btns' })}
-            </Button>
-          </div>
-        </Form>
-        <div className="text-center fs-14 mt-3">
-          <Trans i18nKey="login.agreements" ns="translation">
-            By registering, you agree to the
-            <Link
-              to="/privacy"
-              onClick={(evt) => {
-                argumentClick(evt, 'privacy');
-              }}
-              target="_blank">
-              privacy policy
-            </Link>
-            and
-            <Link
-              to="/tos"
-              onClick={(evt) => {
-                argumentClick(evt, 'tos');
-              }}
-              target="_blank">
-              terms of service
-            </Link>
-            .
-          </Trans>
+        <div className="d-grid">
+          <Button variant="primary" type="submit">
+            {t('signup', { keyPrefix: 'btns' })}
+          </Button>
         </div>
-        <div className="text-center mt-5">
-          <Trans i18nKey="login.info_login" ns="translation">
-            Already have an account? <Link to="/users/login">Log in</Link>
-          </Trans>
-        </div>
-      </Col>
-      <PicAuthCodeModal
-        visible={showModal}
-        data={{
-          captcha: formData.captcha_code,
-          imgCode,
-        }}
-        handleCaptcha={handleChange}
-        clickSubmit={handleRegister}
-        refreshImgCode={getImgCode}
-        onClose={() => setModalState(false)}
-      />
+      </Form>
+      <div className="text-center small mt-3">
+        <Trans i18nKey="login.agreements" ns="translation">
+          By registering, you agree to the
+          <Link
+            to="/privacy"
+            onClick={(evt) => {
+              legalClick(evt, 'privacy');
+            }}
+            target="_blank">
+            privacy policy
+          </Link>
+          and
+          <Link
+            to="/tos"
+            onClick={(evt) => {
+              legalClick(evt, 'tos');
+            }}
+            target="_blank">
+            terms of service
+          </Link>
+          .
+        </Trans>
+      </div>
     </>
   );
 };

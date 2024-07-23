@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package schema
 
 import (
@@ -5,16 +24,15 @@ import (
 	"fmt"
 	"net/mail"
 	"net/url"
+	"strings"
 
-	"github.com/answerdev/answer/internal/base/handler"
-	"github.com/answerdev/answer/internal/base/reason"
-	"github.com/answerdev/answer/internal/base/translator"
-	"github.com/answerdev/answer/internal/base/validator"
+	"github.com/apache/incubator-answer/internal/base/constant"
+	"github.com/apache/incubator-answer/internal/base/handler"
+	"github.com/apache/incubator-answer/internal/base/reason"
+	"github.com/apache/incubator-answer/internal/base/translator"
+	"github.com/apache/incubator-answer/internal/base/validator"
 	"github.com/segmentfault/pacman/errors"
 )
-
-const PermaLinkQuestionIDAndTitle = 1
-const PermaLinkQuestionID = 2
 
 // SiteGeneralReq site general request
 type SiteGeneralReq struct {
@@ -23,11 +41,7 @@ type SiteGeneralReq struct {
 	Description      string `validate:"omitempty,sanitizer,gt=3,lte=2000" form:"description" json:"description"`
 	SiteUrl          string `validate:"required,sanitizer,gt=1,lte=512,url" form:"site_url" json:"site_url"`
 	ContactEmail     string `validate:"required,sanitizer,gt=1,lte=512,email" form:"contact_email" json:"contact_email"`
-}
-
-type SiteSeoReq struct {
-	PermaLink int    `validate:"required,lte=3,gte=0" form:"permalink" json:"permalink"`
-	Robots    string `validate:"required" form:"robots" json:"robots"`
+	CheckUpdate      bool   `validate:"omitempty,sanitizer" form:"check_update" json:"check_update"`
 }
 
 func (r *SiteGeneralReq) FormatSiteUrl() {
@@ -36,6 +50,10 @@ func (r *SiteGeneralReq) FormatSiteUrl() {
 		return
 	}
 	r.SiteUrl = fmt.Sprintf("%s://%s", parsedUrl.Scheme, parsedUrl.Host)
+	if len(parsedUrl.Path) > 0 {
+		r.SiteUrl = r.SiteUrl + parsedUrl.Path
+		r.SiteUrl = strings.TrimSuffix(r.SiteUrl, "/")
+	}
 }
 
 // SiteInterfaceReq site interface request
@@ -54,10 +72,11 @@ type SiteBrandingReq struct {
 
 // SiteWriteReq site write request
 type SiteWriteReq struct {
-	RequiredTag   bool     `validate:"omitempty" form:"required_tag" json:"required_tag"`
-	RecommendTags []string `validate:"omitempty" form:"recommend_tags" json:"recommend_tags"`
-	ReservedTags  []string `validate:"omitempty" form:"reserved_tags" json:"reserved_tags"`
-	UserID        string   `json:"-"`
+	RestrictAnswer bool     `validate:"omitempty" form:"restrict_answer" json:"restrict_answer"`
+	RequiredTag    bool     `validate:"omitempty" form:"required_tag" json:"required_tag"`
+	RecommendTags  []string `validate:"omitempty" form:"recommend_tags" json:"recommend_tags"`
+	ReservedTags   []string `validate:"omitempty" form:"reserved_tags" json:"reserved_tags"`
+	UserID         string   `json:"-"`
 }
 
 // SiteLegalReq site branding request
@@ -89,24 +108,51 @@ type GetSiteLegalInfoResp struct {
 	PrivacyPolicyParsedText    string `json:"privacy_policy_parsed_text,omitempty"`
 }
 
+// SiteUsersReq site users config request
+type SiteUsersReq struct {
+	DefaultAvatar          string `validate:"required,oneof=system gravatar" json:"default_avatar"`
+	GravatarBaseURL        string `json:"gravatar_base_url"`
+	AllowUpdateDisplayName bool   `json:"allow_update_display_name"`
+	AllowUpdateUsername    bool   `json:"allow_update_username"`
+	AllowUpdateAvatar      bool   `json:"allow_update_avatar"`
+	AllowUpdateBio         bool   `json:"allow_update_bio"`
+	AllowUpdateWebsite     bool   `json:"allow_update_website"`
+	AllowUpdateLocation    bool   `json:"allow_update_location"`
+}
+
 // SiteLoginReq site login request
 type SiteLoginReq struct {
-	AllowNewRegistrations bool `json:"allow_new_registrations"`
-	LoginRequired         bool `json:"login_required"`
+	AllowNewRegistrations   bool     `json:"allow_new_registrations"`
+	AllowEmailRegistrations bool     `json:"allow_email_registrations"`
+	AllowPasswordLogin      bool     `json:"allow_password_login"`
+	LoginRequired           bool     `json:"login_required"`
+	AllowEmailDomains       []string `json:"allow_email_domains"`
 }
 
 // SiteCustomCssHTMLReq site custom css html
 type SiteCustomCssHTMLReq struct {
-	CustomHead   string `validate:"omitempty,gt=0,lte=65536" json:"custom_head"`
-	CustomCss    string `validate:"omitempty,gt=0,lte=65536" json:"custom_css"`
-	CustomHeader string `validate:"omitempty,gt=0,lte=65536" json:"custom_header"`
-	CustomFooter string `validate:"omitempty,gt=0,lte=65536" json:"custom_footer"`
+	CustomHead    string `validate:"omitempty,gt=0,lte=65536" json:"custom_head"`
+	CustomCss     string `validate:"omitempty,gt=0,lte=65536" json:"custom_css"`
+	CustomHeader  string `validate:"omitempty,gt=0,lte=65536" json:"custom_header"`
+	CustomFooter  string `validate:"omitempty,gt=0,lte=65536" json:"custom_footer"`
+	CustomSideBar string `validate:"omitempty,gt=0,lte=65536" json:"custom_sidebar"`
 }
 
 // SiteThemeReq site theme config
 type SiteThemeReq struct {
 	Theme       string                 `validate:"required,gt=0,lte=255" json:"theme"`
 	ThemeConfig map[string]interface{} `validate:"omitempty" json:"theme_config"`
+	ColorScheme string                 `validate:"omitempty,gt=0,lte=100" json:"color_scheme"`
+}
+
+type SiteSeoReq struct {
+	Permalink int    `validate:"required,lte=4,gte=0" form:"permalink" json:"permalink"`
+	Robots    string `validate:"required" form:"robots" json:"robots"`
+}
+
+func (s *SiteSeoResp) IsShortLink() bool {
+	return s.Permalink == constant.PermalinkQuestionIDAndTitleByShortID ||
+		s.Permalink == constant.PermalinkQuestionIDByShortID
 }
 
 // SiteGeneralResp site general response
@@ -124,11 +170,15 @@ type SiteLoginResp SiteLoginReq
 // SiteCustomCssHTMLResp site custom css html response
 type SiteCustomCssHTMLResp SiteCustomCssHTMLReq
 
+// SiteUsersResp site users response
+type SiteUsersResp SiteUsersReq
+
 // SiteThemeResp site theme response
 type SiteThemeResp struct {
 	ThemeOptions []*ThemeOption         `json:"theme_options"`
 	Theme        string                 `json:"theme"`
 	ThemeConfig  map[string]interface{} `json:"theme_config"`
+	ColorScheme  string                 `json:"color_scheme"`
 }
 
 func (s *SiteThemeResp) TrTheme(ctx context.Context) {
@@ -165,14 +215,17 @@ type SiteInfoResp struct {
 	Login         *SiteLoginResp         `json:"login"`
 	Theme         *SiteThemeResp         `json:"theme"`
 	CustomCssHtml *SiteCustomCssHTMLResp `json:"custom_css_html"`
-	SiteSeo       *SiteSeoReq            `json:"site_seo"`
+	SiteSeo       *SiteSeoResp           `json:"site_seo"`
+	SiteUsers     *SiteUsersResp         `json:"site_users"`
+	Write         *SiteWriteResp         `json:"site_write"`
 	Version       string                 `json:"version"`
+	Revision      string                 `json:"revision"`
 }
 type TemplateSiteInfoResp struct {
 	General       *SiteGeneralResp       `json:"general"`
 	Interface     *SiteInterfaceResp     `json:"interface"`
 	Branding      *SiteBrandingResp      `json:"branding"`
-	SiteSeo       *SiteSeoReq            `json:"site_seo"`
+	SiteSeo       *SiteSeoResp           `json:"site_seo"`
 	CustomCssHtml *SiteCustomCssHTMLResp `json:"custom_css_html"`
 	Title         string
 	Year          string
@@ -188,7 +241,7 @@ type UpdateSMTPConfigReq struct {
 	FromName           string `validate:"omitempty,gt=0,lte=256" json:"from_name"`
 	SMTPHost           string `validate:"omitempty,gt=0,lte=256" json:"smtp_host"`
 	SMTPPort           int    `validate:"omitempty,min=1,max=65535" json:"smtp_port"`
-	Encryption         string `validate:"omitempty,oneof=SSL" json:"encryption"` // "" SSL
+	Encryption         string `validate:"omitempty,oneof=SSL TLS" json:"encryption"` // "" SSL TLS
 	SMTPUsername       string `validate:"omitempty,gt=0,lte=256" json:"smtp_username"`
 	SMTPPassword       string `validate:"omitempty,gt=0,lte=256" json:"smtp_password"`
 	SMTPAuthentication bool   `validate:"omitempty" json:"smtp_authentication"`
@@ -212,7 +265,7 @@ type GetSMTPConfigResp struct {
 	FromName           string `json:"from_name"`
 	SMTPHost           string `json:"smtp_host"`
 	SMTPPort           int    `json:"smtp_port"`
-	Encryption         string `json:"encryption"` // "" SSL
+	Encryption         string `json:"encryption"` // "" SSL TLS
 	SMTPUsername       string `json:"smtp_username"`
 	SMTPPassword       string `json:"smtp_password"`
 	SMTPAuthentication bool   `json:"smtp_authentication"`
@@ -222,6 +275,7 @@ type GetSMTPConfigResp struct {
 type GetManifestJsonResp struct {
 	ManifestVersion int               `json:"manifest_version"`
 	Version         string            `json:"version"`
+	Revision        string            `json:"revision"`
 	ShortName       string            `json:"short_name"`
 	Name            string            `json:"name"`
 	Icons           map[string]string `json:"icons"`
@@ -229,4 +283,108 @@ type GetManifestJsonResp struct {
 	Display         string            `json:"display"`
 	ThemeColor      string            `json:"theme_color"`
 	BackgroundColor string            `json:"background_color"`
+}
+
+const (
+	// PrivilegeLevel1 low
+	PrivilegeLevel1 PrivilegeLevel = 1
+	// PrivilegeLevel2 medium
+	PrivilegeLevel2 PrivilegeLevel = 2
+	// PrivilegeLevel3 high
+	PrivilegeLevel3 PrivilegeLevel = 3
+	// PrivilegeLevelCustom custom
+	PrivilegeLevelCustom PrivilegeLevel = 99
+)
+
+type PrivilegeLevel int
+type PrivilegeOptions []*PrivilegeOption
+
+func (p PrivilegeOptions) Choose(level PrivilegeLevel) (option *PrivilegeOption) {
+	for _, op := range p {
+		if op.Level == level {
+			return op
+		}
+	}
+	return nil
+}
+
+// GetPrivilegesConfigResp get privileges config response
+type GetPrivilegesConfigResp struct {
+	Options       []*PrivilegeOption `json:"options"`
+	SelectedLevel PrivilegeLevel     `json:"selected_level"`
+}
+
+// PrivilegeOption privilege option
+type PrivilegeOption struct {
+	Level      PrivilegeLevel        `json:"level"`
+	LevelDesc  string                `json:"level_desc"`
+	Privileges []*constant.Privilege `validate:"dive" json:"privileges"`
+}
+
+// UpdatePrivilegesConfigReq update privileges config request
+type UpdatePrivilegesConfigReq struct {
+	Level            PrivilegeLevel        `validate:"required,min=1,max=3|eq=99" json:"level"`
+	CustomPrivileges []*constant.Privilege `validate:"dive" json:"custom_privileges"`
+}
+
+var (
+	DefaultPrivilegeOptions      PrivilegeOptions
+	DefaultCustomPrivilegeOption *PrivilegeOption
+	privilegeOptionsLevelMapping = map[string][]int{
+		constant.RankQuestionAddKey:               {1, 1, 1},
+		constant.RankAnswerAddKey:                 {1, 1, 1},
+		constant.RankCommentAddKey:                {1, 1, 1},
+		constant.RankReportAddKey:                 {1, 1, 1},
+		constant.RankCommentVoteUpKey:             {1, 1, 1},
+		constant.RankLinkUrlLimitKey:              {1, 10, 10},
+		constant.RankQuestionVoteUpKey:            {1, 8, 15},
+		constant.RankAnswerVoteUpKey:              {1, 8, 15},
+		constant.RankQuestionVoteDownKey:          {125, 125, 125},
+		constant.RankAnswerVoteDownKey:            {125, 125, 125},
+		constant.RankInviteSomeoneToAnswerKey:     {1, 500, 1000},
+		constant.RankTagAddKey:                    {1, 750, 1500},
+		constant.RankTagEditKey:                   {1, 50, 100},
+		constant.RankQuestionEditKey:              {1, 100, 200},
+		constant.RankAnswerEditKey:                {1, 100, 200},
+		constant.RankQuestionEditWithoutReviewKey: {1, 1000, 2000},
+		constant.RankAnswerEditWithoutReviewKey:   {1, 1000, 2000},
+		constant.RankQuestionAuditKey:             {1, 1000, 2000},
+		constant.RankAnswerAuditKey:               {1, 1000, 2000},
+		constant.RankTagAuditKey:                  {1, 2500, 5000},
+		constant.RankTagEditWithoutReviewKey:      {1, 10000, 20000},
+		constant.RankTagSynonymKey:                {1, 10000, 20000},
+	}
+)
+
+func init() {
+	DefaultPrivilegeOptions = append(DefaultPrivilegeOptions, &PrivilegeOption{
+		Level:     PrivilegeLevel1,
+		LevelDesc: reason.PrivilegeLevel1Desc,
+	}, &PrivilegeOption{
+		Level:     PrivilegeLevel2,
+		LevelDesc: reason.PrivilegeLevel2Desc,
+	}, &PrivilegeOption{
+		Level:     PrivilegeLevel3,
+		LevelDesc: reason.PrivilegeLevel3Desc,
+	})
+
+	for _, option := range DefaultPrivilegeOptions {
+		for _, privilege := range constant.RankAllPrivileges {
+			if len(privilegeOptionsLevelMapping[privilege.Key]) == 0 {
+				continue
+			}
+			option.Privileges = append(option.Privileges, &constant.Privilege{
+				Label: privilege.Label,
+				Value: privilegeOptionsLevelMapping[privilege.Key][option.Level-1],
+				Key:   privilege.Key,
+			})
+		}
+	}
+
+	// set up default custom privilege option
+	DefaultCustomPrivilegeOption = &PrivilegeOption{
+		Level:      PrivilegeLevelCustom,
+		LevelDesc:  reason.PrivilegeLevelCustomDesc,
+		Privileges: DefaultPrivilegeOptions[0].Privileges,
+	}
 }
